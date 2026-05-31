@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kernel BZ Polling — Execution Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+     background:#0d1117;color:#c9d1d9;padding:20px;line-height:1.5}
+h1{font-size:1.6rem;margin-bottom:4px;color:#58a6ff}
+.subtitle{color:#8b949e;font-size:.85rem;margin-bottom:20px}
+.cards{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px 20px;min-width:130px;text-align:center}
+.card .value{font-size:1.8rem;font-weight:700}
+.card .label{font-size:.75rem;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+.card.success .value{color:#3fb950}
+.card.failed .value{color:#f85149}
+.card.timeout .value{color:#d29922}
+.card.total .value{color:#58a6ff}
+.card.running .value{color:#a371f7}
+.filters{margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+  border-radius:6px;padding:6px 10px;font-size:.85rem}
+.filters label{font-size:.8rem;color:#8b949e}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+thead th{position:sticky;top:0;background:#161b22;color:#8b949e;text-align:left;
+  padding:10px 12px;border-bottom:2px solid #30363d;cursor:pointer;user-select:none;white-space:nowrap}
+thead th:hover{color:#58a6ff}
+thead th .arrow{margin-left:4px;font-size:.7rem}
+tbody tr{border-bottom:1px solid #21262d}
+tbody tr:hover{background:#161b22}
+td{padding:8px 12px;vertical-align:top}
+.status{display:inline-block;padding:2px 10px;border-radius:12px;font-size:.78rem;font-weight:600}
+.status.success{background:#23312a;color:#3fb950}
+.status.failed{background:#3d1f20;color:#f85149}
+.status.timeout{background:#3d2e00;color:#d29922}
+.status.error{background:#3d1f20;color:#f85149}
+.status.running{background:#2a1f3d;color:#a371f7}
+.duration{font-variant-numeric:tabular-nums}
+.command{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace;font-size:.78rem;color:#8b949e}
+.command:hover{white-space:normal;word-break:break-all}
+@media(max-width:800px){.cards{flex-direction:column} table{font-size:.78rem}}
+</style>
+</head>
+<body>
+<h1>Kernel BZ Polling — Execution Dashboard</h1>
+<p class="subtitle">Last updated: <span id="ts">2026-05-31 16:15:34 UTC</span></p>
+
+<div class="cards" id="cards"></div>
+
+<div class="filters">
+  <div><label>Status:</label>
+    <select id="fStatus"><option value="">All</option></select></div>
+  <div><label>Platform:</label>
+    <select id="fPlatform"><option value="">All</option></select></div>
+  <div><label>Search:</label>
+    <input id="fSearch" placeholder="JIRA ID or kernel…" /></div>
+</div>
+
+<table>
+<thead><tr id="hdr"></tr></thead>
+<tbody id="tbody"></tbody>
+</table>
+
+<script>
+const DATA = {"RHEL-142095": {"jira_id": "RHEL-142095", "command": "python3 run.py --instances-name RHEL-142095 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-142095 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.2-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522579554/publish_x86_64/14353323778/artifacts/repo/5.14.0-284.170.1.6010_2522579297.el9_2.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-284.170.1.el9_2", "start_time": "2026-05-30T23:34:02.111990", "status": "failed", "end_time": "2026-05-30T23:34:02.310532", "return_code": 1}, "RHEL-142094": {"jira_id": "RHEL-142094", "command": "python3 run.py --instances-name RHEL-142094 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-142094 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522553672/publish_x86_64/14353126033/artifacts/repo/5.14.0-70.179.1.6011_2522553262.el9_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-70.179.1.el9_0", "start_time": "2026-05-30T23:34:02.312529", "status": "failed", "end_time": "2026-05-30T23:34:02.529417", "return_code": 1}, "RHEL-142092": {"jira_id": "RHEL-142092", "command": "python3 run.py --instances-name RHEL-142092 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-142092 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-8 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-8.8-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2521991762/publish_x86_64/14348806467/artifacts/repo/4.18.0-477.141.1.el8_8.9749_2521991333.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "4.18.0-477.136.1.el8_8", "start_time": "2026-05-30T23:34:02.531401", "status": "failed", "end_time": "2026-05-30T23:34:02.716268", "return_code": 1}, "RHEL-142088": {"jira_id": "RHEL-142088", "command": "python3 run.py --instances-name RHEL-142088 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-142088 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-7 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-7.9-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2377564201/publish_x86_64/13444702399/artifacts/repo/3.10.0-1160.147.1.el7.1025_2377564000.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "3.10.0-1160.119.1.el7", "start_time": "2026-05-30T23:34:02.718273", "status": "failed", "end_time": "2026-05-30T23:34:02.891803", "return_code": 1}, "RHEL-143896": {"jira_id": "RHEL-143896", "command": "python3 run.py --instances-name RHEL-143896 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143896 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.6-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2423048396/publish_x86_64/13740622001/artifacts/repo/5.14.0-570.105.1.5719_2423048193.el9_6.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-570.110.1.el9_6", "start_time": "2026-05-30T23:34:02.893745", "status": "failed", "end_time": "2026-05-30T23:34:03.081474", "return_code": 1}, "RHEL-143895": {"jira_id": "RHEL-143895", "command": "python3 run.py --instances-name RHEL-143895 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143895 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.4-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2423038159/publish_x86_64/13740545747/artifacts/repo/5.14.0-427.117.1.5718_2423037859.el9_4.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-427.125.1.el9_4", "start_time": "2026-05-30T23:34:03.083402", "status": "failed", "end_time": "2026-05-30T23:34:03.260317", "return_code": 1}, "RHEL-143894": {"jira_id": "RHEL-143894", "command": "python3 run.py --instances-name RHEL-143894 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143894 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.2-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2423024447/publish_x86_64/13740444411/artifacts/repo/5.14.0-284.164.1.5717_2423024102.el9_2.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-284.170.1.el9_2", "start_time": "2026-05-30T23:34:03.262256", "status": "failed", "end_time": "2026-05-30T23:34:03.448972", "return_code": 1}, "RHEL-143893": {"jira_id": "RHEL-143893", "command": "python3 run.py --instances-name RHEL-143893 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143893 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2423013677/publish_x86_64/13740364541/artifacts/repo/5.14.0-70.173.1.5716_2423013314.el9_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-70.179.1.el9_0", "start_time": "2026-05-30T23:34:03.451110", "status": "failed", "end_time": "2026-05-30T23:34:03.645145", "return_code": 1}, "RHEL-143891": {"jira_id": "RHEL-143891", "command": "python3 run.py --instances-name RHEL-143891 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143891 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-8 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-8.8-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2422940639/publish_x86_64/13739842478/artifacts/repo/4.18.0-477.135.1.el8_8.9584_2422940395.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "4.18.0-477.136.1.el8_8", "start_time": "2026-05-30T23:34:03.647351", "status": "failed", "end_time": "2026-05-30T23:34:03.846691", "return_code": 1}, "RHEL-143881": {"jira_id": "RHEL-143881", "command": "python3 run.py --instances-name RHEL-143881 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143881 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-10 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-10.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522721144/publish_x86_64/14354428420/artifacts/repo/6.12.0-55.73.1.1072_2522720542.el10_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "6.12.0-55.33.1.el10_0", "start_time": "2026-05-30T23:34:03.848683", "status": "failed", "end_time": "2026-05-30T23:34:04.034476", "return_code": 1}, "RHEL-143878": {"jira_id": "RHEL-143878", "command": "python3 run.py --instances-name RHEL-143878 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143878 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.6-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522638274/publish_x86_64/14353763580/artifacts/repo/5.14.0-570.114.1.6008_2522634161.el9_6.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-570.110.1.el9_6", "start_time": "2026-05-30T23:34:04.036713", "status": "failed", "end_time": "2026-05-30T23:34:04.223847", "return_code": 1}, "RHEL-143877": {"jira_id": "RHEL-143877", "command": "python3 run.py --instances-name RHEL-143877 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143877 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.4-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522615653/publish_x86_64/14353603925/artifacts/repo/5.14.0-427.125.1.6009_2522614644.el9_4.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-427.125.1.el9_4", "start_time": "2026-05-30T23:34:04.226048", "status": "failed", "end_time": "2026-05-30T23:34:04.418350", "return_code": 1}, "RHEL-143876": {"jira_id": "RHEL-143876", "command": "python3 run.py --instances-name RHEL-143876 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143876 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.2-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522579554/publish_x86_64/14353323778/artifacts/repo/5.14.0-284.170.1.6010_2522579297.el9_2.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-284.170.1.el9_2", "start_time": "2026-05-30T23:34:04.420507", "status": "failed", "end_time": "2026-05-30T23:34:04.621666", "return_code": 1}, "RHEL-143875": {"jira_id": "RHEL-143875", "command": "python3 run.py --instances-name RHEL-143875 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143875 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2522553672/publish_x86_64/14353126033/artifacts/repo/5.14.0-70.179.1.6011_2522553262.el9_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-70.179.1.el9_0", "start_time": "2026-05-30T23:34:04.623854", "status": "failed", "end_time": "2026-05-30T23:34:04.859583", "return_code": 1}, "RHEL-143873": {"jira_id": "RHEL-143873", "command": "python3 run.py --instances-name RHEL-143873 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143873 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-8 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-8.8-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2521991762/publish_x86_64/14348806467/artifacts/repo/4.18.0-477.141.1.el8_8.9749_2521991333.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "4.18.0-477.136.1.el8_8", "start_time": "2026-05-30T23:34:04.861748", "status": "failed", "end_time": "2026-05-30T23:34:05.048807", "return_code": 1}, "RHEL-143869": {"jira_id": "RHEL-143869", "command": "python3 run.py --instances-name RHEL-143869 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143869 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-7 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-7.9-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2377564201/publish_x86_64/13444702399/artifacts/repo/3.10.0-1160.147.1.el7.1025_2377564000.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "3.10.0-1160.119.1.el7", "start_time": "2026-05-30T23:34:05.050763", "status": "failed", "end_time": "2026-05-30T23:34:05.244588", "return_code": 1}, "RHEL-143900": {"jira_id": "RHEL-143900", "command": "python3 run.py --instances-name RHEL-143900 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143900 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-10 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-10.1-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2283686048/publish_x86_64/12849444303/artifacts/repo/6.12.0-124.31.1.697_2283685970.el10_1.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "6.12.0-124.21.1.el10_1", "start_time": "2026-05-30T23:34:05.246514", "status": "failed", "end_time": "2026-05-30T23:34:05.426466", "return_code": 1}, "RHEL-143897": {"jira_id": "RHEL-143897", "command": "python3 run.py --instances-name RHEL-143897 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143897 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.7-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2283659987/publish_x86_64/12849315705/artifacts/repo/5.14.0-611.27.1.5370_2283659893.el9_7.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-611.49.1.el9_7", "start_time": "2026-05-30T23:34:05.428421", "status": "failed", "end_time": "2026-05-30T23:34:05.616169", "return_code": 1}, "RHEL-143892": {"jira_id": "RHEL-143892", "command": "python3 run.py --instances-name RHEL-143892 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143892 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-8 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-8.10-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2283654736/publish_x86_64/12849293633/artifacts/repo/4.18.0-553.98.1.el8_10.9377_2283654690.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "4.18.0-553.89.1.el8_10", "start_time": "2026-05-30T23:34:05.618341", "status": "failed", "end_time": "2026-05-30T23:34:05.808473", "return_code": 1}, "RHEL-143899": {"jira_id": "RHEL-143899", "command": "python3 run.py --instances-name RHEL-143899 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143899 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-10 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-10.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2481606003/publish_x86_64/14098330915/artifacts/repo/6.12.0-55.70.1.972_2481605800.el10_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "6.12.0-55.33.1.el10_0", "start_time": "2026-05-30T23:34:05.810602", "status": "failed", "end_time": "2026-05-30T23:34:05.999237", "return_code": 1}, "RHEL-143882": {"jira_id": "RHEL-143882", "command": "python3 run.py --instances-name RHEL-143882 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143882 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-10 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-10.1-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2283573769/publish_x86_64/12848902728/artifacts/repo/6.12.0-124.31.1.696_2283573642.el10_1.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "6.12.0-124.21.1.el10_1", "start_time": "2026-05-30T23:34:06.001286", "status": "failed", "end_time": "2026-05-30T23:34:06.201220", "return_code": 1}, "RHEL-143879": {"jira_id": "RHEL-143879", "command": "python3 run.py --instances-name RHEL-143879 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143879 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.7-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2453140799/publish_x86_64/13921971204/artifacts/repo/5.14.0-611.50.1.5789_2453140639.el9_7.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-611.49.1.el9_7", "start_time": "2026-05-30T23:34:06.203223", "status": "failed", "end_time": "2026-05-30T23:34:06.390595", "return_code": 1}, "RHEL-143874": {"jira_id": "RHEL-143874", "command": "python3 run.py --instances-name RHEL-143874 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-143874 --log-level DEBUG --cloud openstack --rhbuild 5.3 --platform rhel-8 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-8.10-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2283533417/publish_x86_64/12848711984/artifacts/repo/4.18.0-553.98.1.el8_10.9376_2283533288.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "4.18.0-553.89.1.el8_10", "start_time": "2026-05-30T23:34:06.392707", "status": "failed", "end_time": "2026-05-30T23:34:06.577123", "return_code": 1}, "RHEL-150465": {"jira_id": "RHEL-150465", "command": "python3 run.py --instances-name RHEL-150465 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-150465 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-10 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-10.0-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2481920431/publish_x86_64/14100445858/artifacts/repo/6.12.0-55.70.1.974_2481920255.el10_0.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "6.12.0-55.33.1.el10_0", "start_time": "2026-05-30T23:34:06.579145", "status": "failed", "end_time": "2026-05-30T23:34:06.766259", "return_code": 1}, "RHEL-150463": {"jira_id": "RHEL-150463", "command": "python3 run.py --instances-name RHEL-150463 --log-dir /ceph/ceph-qe-logs/manim/logs/kernel-logs/RHEL-150463 --log-level DEBUG --cloud openstack --rhbuild 9.1 --platform rhel-9 --global-conf conf/squid/cephfs/kernel_verification.yaml --suite suites/tentacle/cephfs/kernel_pre_verification.yaml --osp-cred osp/osp-cred-ci-2.yaml --inventory conf/inventory/rhel-9.6-server-x86_64.yaml --custom-config pre=https://artifacts.internal.cki-project.org/arr-cki-prod-internal-artifacts/internal-artifacts/2481923758/publish_x86_64/14100467464/artifacts/repo/5.14.0-570.111.1.5860_2481923132.el9_6.x86_64/ --build stable --skip-sos-report --store", "rhosd_kernel": "5.14.0-570.110.1.el9_6", "start_time": "2026-05-30T23:34:06.768185", "status": "failed", "end_time": "2026-05-30T23:34:06.936579", "return_code": 1}};
+
+const COLS = [
+  {key:'jira_id',     label:'JIRA ID'},
+  {key:'platform',    label:'Platform'},
+  {key:'rhosd_kernel',label:'RHOS-D Kernel'},
+  {key:'status',      label:'Status'},
+  {key:'duration_seconds', label:'Duration'},
+  {key:'start_time',  label:'Started'},
+  {key:'return_code', label:'RC'},
+  {key:'command',     label:'Command'},
+];
+
+let sortCol = 'start_time', sortAsc = false;
+const rows = Object.values(DATA);
+
+/* summary cards */
+function renderCards(){
+  const total = rows.length;
+  const counts = {success:0, failed:0, timeout:0, error:0, running:0};
+  rows.forEach(r => { const s = r.status||'unknown'; if(s in counts) counts[s]++; else if(s==='unknown') counts.error++; });
+  const c = document.getElementById('cards');
+  c.innerHTML = `
+    <div class="card total"><div class="value">${total}</div><div class="label">Total</div></div>
+    <div class="card success"><div class="value">${counts.success}</div><div class="label">Passed</div></div>
+    <div class="card failed"><div class="value">${counts.failed+counts.error}</div><div class="label">Failed</div></div>
+    <div class="card timeout"><div class="value">${counts.timeout}</div><div class="label">Timeout</div></div>
+    <div class="card running"><div class="value">${counts.running}</div><div class="label">Running</div></div>`;
+}
+
+/* filters */
+function populateFilters(){
+  const statuses = [...new Set(rows.map(r=>r.status||'unknown'))].sort();
+  const platforms = [...new Set(rows.map(r=>r.platform||'N/A'))].sort();
+  const fS = document.getElementById('fStatus');
+  const fP = document.getElementById('fPlatform');
+  statuses.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;fS.appendChild(o);});
+  platforms.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;fP.appendChild(o);});
+}
+
+function getFiltered(){
+  const s = document.getElementById('fStatus').value;
+  const p = document.getElementById('fPlatform').value;
+  const q = document.getElementById('fSearch').value.toLowerCase();
+  return rows.filter(r=>{
+    if(s && (r.status||'unknown')!==s) return false;
+    if(p && (r.platform||'N/A')!==p) return false;
+    if(q){
+      const hay = JSON.stringify(r).toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+/* sorting */
+function cmp(a,b){
+  let va=a[sortCol], vb=b[sortCol];
+  if(va==null) va='';
+  if(vb==null) vb='';
+  if(typeof va==='number'&&typeof vb==='number') return sortAsc?va-vb:vb-va;
+  va=String(va); vb=String(vb);
+  return sortAsc?va.localeCompare(vb):vb.localeCompare(va);
+}
+
+/* render */
+function renderHeader(){
+  const tr = document.getElementById('hdr');
+  tr.innerHTML = '';
+  COLS.forEach(c=>{
+    const th = document.createElement('th');
+    let arrow = '';
+    if(c.key===sortCol) arrow = `<span class="arrow">${sortAsc?'▲':'▼'}</span>`;
+    th.innerHTML = c.label + arrow;
+    th.onclick = ()=>{ if(sortCol===c.key) sortAsc=!sortAsc; else {sortCol=c.key;sortAsc=true;} render(); };
+    tr.appendChild(th);
+  });
+}
+
+function fmtDuration(s){
+  if(s==null) return '-';
+  if(s<60) return s+'s';
+  const m=Math.floor(s/60); const sec=s%60;
+  if(m<60) return m+'m '+sec+'s';
+  const h=Math.floor(m/60); return h+'h '+(m%60)+'m';
+}
+
+function fmtTime(t){
+  if(!t) return '-';
+  try{ const d=new Date(t); return d.toLocaleString(); }catch(e){ return t; }
+}
+
+function renderTable(){
+  const data = getFiltered().sort(cmp);
+  const tb = document.getElementById('tbody');
+  tb.innerHTML = '';
+  data.forEach(r=>{
+    const tr = document.createElement('tr');
+    COLS.forEach(c=>{
+      const td = document.createElement('td');
+      const v = r[c.key];
+      if(c.key==='status'){
+        td.innerHTML = `<span class="status ${v||'unknown'}">${v||'unknown'}</span>`;
+      } else if(c.key==='duration_seconds'){
+        td.className='duration';
+        td.textContent = fmtDuration(v);
+      } else if(c.key==='start_time'){
+        td.textContent = fmtTime(v);
+      } else if(c.key==='command'){
+        td.className='command';
+        td.textContent = v||'';
+        td.title = v||'';
+      } else {
+        td.textContent = v!=null?v:'-';
+      }
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+}
+
+function render(){ renderHeader(); renderTable(); }
+
+renderCards();
+populateFilters();
+render();
+document.getElementById('fStatus').onchange = render;
+document.getElementById('fPlatform').onchange = render;
+document.getElementById('fSearch').oninput = render;
+</script>
+</body>
+</html>
