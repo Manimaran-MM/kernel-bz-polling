@@ -29,42 +29,42 @@ queries:
       - components
     max_results: 100
     
-  # Alternative query for specific status
-  kernel_cephfs_integration_only:
-    name: "Kernel CephFS Integration Status Only"
-    description: "Query for RHEL kernel CephFS in Integration status only"
-    jql: |
-      project = RHEL
-      and component = "kernel / File Systems / CephFS"
-      and status = Integration
-      and summary !~ rbd
-      ORDER BY created DESC
-    fields:
-      - key
-      - summary
-      - status
-      - assignee
-      - description
-    max_results: 50
-    
-  # Query for in-progress items
-  kernel_cephfs_in_progress:
-    name: "Kernel CephFS In Progress"
-    description: "Query for RHEL kernel CephFS in In Progress status"
-    jql: |
-      project = RHEL
-      and component = "kernel / File Systems / CephFS"
-      and status = "In Progress"
-      and "Preliminary Testing" != Pass
-      and summary !~ rbd
-      ORDER BY updated DESC
-    fields:
-      - key
-      - summary
-      - status
-      - assignee
-      - description
-    max_results: 50
+  # # Alternative query for specific status (not used)
+  # kernel_cephfs_integration_only:
+  #   name: "Kernel CephFS Integration Status Only"
+  #   description: "Query for RHEL kernel CephFS in Integration status only"
+  #   jql: |
+  #     project = RHEL
+  #     and component = "kernel / File Systems / CephFS"
+  #     and status = Integration
+  #     and summary !~ rbd
+  #     ORDER BY created DESC
+  #   fields:
+  #     - key
+  #     - summary
+  #     - status
+  #     - assignee
+  #     - description
+  #   max_results: 50
+
+  # # Query for in-progress items (not used)
+  # kernel_cephfs_in_progress:
+  #   name: "Kernel CephFS In Progress"
+  #   description: "Query for RHEL kernel CephFS in In Progress status"
+  #   jql: |
+  #     project = RHEL
+  #     and component = "kernel / File Systems / CephFS"
+  #     and status = "In Progress"
+  #     and "Preliminary Testing" != Pass
+  #     and summary !~ rbd
+  #     ORDER BY updated DESC
+  #   fields:
+  #     - key
+  #     - summary
+  #     - status
+  #     - assignee
+  #     - description
+  #   max_results: 50
 
 # Field mappings for parsing JIRA content
 field_mappings:

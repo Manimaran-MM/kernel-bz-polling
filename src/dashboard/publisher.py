@@ -63,6 +63,7 @@ td{padding:8px 12px;vertical-align:top}
 .status.error{background:#3d1f20;color:#f85149}
 .status.running{background:#2a1f3d;color:#a371f7}
 .status.skipped{background:#21262d;color:#8b949e}
+.status.excluded{background:#2d2121;color:#f0883e}
 .vtype{display:inline-block;padding:2px 10px;border-radius:12px;font-size:.78rem;font-weight:600}
 .vtype.pre{background:#1f3d2a;color:#56d364}
 .vtype.post{background:#1f2a3d;color:#79c0ff}
@@ -115,6 +116,7 @@ const COLS = [
   {key:'platform',    label:'Platform'},
   {key:'verification_type', label:'Verification Type'},
   {key:'jira_kernel', label:'JIRA Kernel'},
+  {key:'fix_version', label:'JIRA Fix Version'},
   {key:'status',      label:'Status'},
   {key:'reason',      label:'Reason'},
   {key:'duration_seconds', label:'Duration'},
@@ -134,7 +136,7 @@ const rows = Object.values(DATA);
 /* summary cards */
 function renderCards(){
   const total = rows.length;
-  const counts = {success:0, failed:0, timeout:0, error:0, running:0, skipped:0};
+  const counts = {success:0, failed:0, timeout:0, error:0, running:0, skipped:0, excluded:0};
   rows.forEach(r => { const s = r.status||'unknown'; if(s in counts) counts[s]++; else if(s==='unknown') counts.error++; });
   const c = document.getElementById('cards');
   c.innerHTML = `
@@ -143,7 +145,8 @@ function renderCards(){
     <div class="card failed"><div class="value">${counts.failed+counts.error}</div><div class="label">Failed</div></div>
     <div class="card timeout"><div class="value">${counts.timeout}</div><div class="label">Timeout</div></div>
     <div class="card running"><div class="value">${counts.running}</div><div class="label">Running</div></div>
-    <div class="card running"><div class="value">${counts.skipped}</div><div class="label">Skipped</div></div>`;
+    <div class="card running"><div class="value">${counts.skipped}</div><div class="label">Skipped</div></div>
+    <div class="card timeout"><div class="value">${counts.excluded}</div><div class="label">Excluded</div></div>`;
 }
 
 /* filters */
@@ -372,7 +375,9 @@ def publish_dashboard() -> bool:
         remote_history = _fetch_remote_executions(token, repo, branch)
         for _key, record in local_data.items():
             hkey = _make_history_key(record)
-            remote_history[hkey] = record
+            existing = remote_history.get(hkey, {})
+            existing.update({k: v for k, v in record.items() if v is not None})
+            remote_history[hkey] = existing
         publish_data = remote_history
     else:
         logger.info("Local execution data is empty — publishing clean dashboard")

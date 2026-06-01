@@ -27,7 +27,7 @@ cephci:
     cloud: "openstack"
     skip_sos_report: true
     store: true
-  timeout: 14400  # 4 hours in seconds
+  timeout: 21600  # 6 hours in seconds
   # RHEL version to rhbuild mapping
   # Maps major version (e.g., 10.x.x -> 10 -> 9.1)
   # Any version starting with the major number will use this mapping
@@ -35,9 +35,9 @@ cephci:
   #           9.0, 9.1, 9.6 all map to 9.1
   #           8.0, 8.10 all map to 5.3
   rhbuild_mapping:
-    "10": "9.1"  # RHEL 10.x -> rhbuild 9.1
-    "9": "9.1"   # RHEL 9.x -> rhbuild 9.1
-    "8": "5.3"   # RHEL 8.x -> rhbuild 5.3
+    "10": "9.0"  # RHEL 10.x -> rhbuild 9.0
+    "9": "9.0"   # RHEL 9.x -> rhbuild 9.0
+    "8": "7.1"   # RHEL 8.x -> rhbuild 7.1
     "7": "5.3"   # RHEL 7.x -> rhbuild 5.3
   
   # RHEL version to inventory mapping
@@ -50,8 +50,12 @@ cephci:
     "7": "conf/inventory/rhel-7.9-server-x86_64.yaml"    # RHEL 7.x
   # Kernel verification parameters
   kernel_verification:
-    global_conf: "conf/squid/cephfs/kernel_verification.yaml"
-    suite: "suites/tentacle/cephfs/kernel_pre_verification.yaml"
+    global_conf: "conf/tentacle/cephfs/kernel-validation/kernel_verification.yaml"
+    global_conf_rhel8: "conf/tentacle/cephfs/kernel-validation/kernel_verification_rhel8_client.yaml"
+    suite_pre: "suites/tentacle/cephfs/kernel-validation/kernel_pre_verification.yaml"
+    suite_post: "suites/tentacle/cephfs/kernel-validation/kernel_post_verification.yaml"
+    suite_pre_rhel8: "suites/tentacle/cephfs/kernel-validation/kernel_pre_verification_rhel8_client.yaml"
+    suite_post_rhel8: "suites/tentacle/cephfs/kernel-validation/kernel_post_verification_rhel8_client.yaml"
     osp_cred: "osp/osp-cred-ci-2.yaml"
     build: "stable"
   # Supported branches

@@ -30,6 +30,18 @@ SSHEOF
     echo "SSH key configured at /root/.ssh_rw/id_rsa"
 fi
 
+# ── .cephci.yaml setup ──
+# Mount to /tmp/.cephci.yaml.in (read-only) and copy to the expected location
+if [ -f /tmp/.cephci.yaml.in ]; then
+    cp /tmp/.cephci.yaml.in /root/.cephci.yaml
+    chmod 644 /root/.cephci.yaml
+    echo ".cephci.yaml installed from mount"
+elif [ -f /root/.cephci.yaml ]; then
+    echo ".cephci.yaml already present"
+else
+    echo "WARNING: No .cephci.yaml found"
+fi
+
 # ── CephCI repository ──
 CEPHCI_DIR="${CEPHCI_LOCAL_PATH:-./cephci}"
 
@@ -53,21 +65,7 @@ if [ -n "$CEPHCI_REPO_URL" ]; then
     fi
 
     # Apply patches to cephci
-    PATCH_DIR="/app/docker/patches"
-    if [ -d "$PATCH_DIR" ] && ls "$PATCH_DIR"/*.patch 1>/dev/null 2>&1; then
-        echo "Applying patches to CephCI..."
-        cd "$CEPHCI_DIR"
-        for patch_file in "$PATCH_DIR"/*.patch; do
-            patch_name=$(basename "$patch_file")
-            if git apply --check "$patch_file" 2>/dev/null; then
-                git apply "$patch_file"
-                echo "  ✅ Applied: $patch_name"
-            else
-                echo "  ⚠️  Skipped (already applied or conflict): $patch_name"
-            fi
-        done
-        cd /app
-    fi
+    python3 /app/docker/patches/apply_patches.py "$CEPHCI_DIR"
 fi
 
 # ── Ensure data dirs ──

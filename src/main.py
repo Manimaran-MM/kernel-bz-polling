@@ -26,6 +26,73 @@ from src.utils.logger import setup_logging, get_logger
 
 EXECUTIONS_FILE = "data/command_executions.json"
 RHOSD_KERNELS_FILE = "data/rhosd_kernel_versions.json"
+EXCLUSION_LIST_FILE = "config/exclusion_list.yaml"
+
+
+def load_exclusion_list(logger):
+    """Load the JIRA exclusion list from config/exclusion_list.yaml.
+
+    Returns a dict mapping JIRA ID -> reason string.
+    """
+    path = Path(EXCLUSION_LIST_FILE)
+    if not path.exists():
+        logger.debug(f"No exclusion list found at {EXCLUSION_LIST_FILE}")
+        return {}
+
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning(f"Failed to read exclusion list: {e}")
+        return {}
+
+    excluded = {}
+    for entry in data.get("excluded_jiras", []) or []:
+        jira_id = entry.get("id")
+        if jira_id:
+            excluded[jira_id] = entry.get("reason", "No reason provided")
+
+    if excluded:
+        logger.info(f"Loaded {len(excluded)} JIRAs from exclusion list")
+    return excluded
+
+
+def record_excluded_jiras(exclusion_map, logger):
+    """Update command_executions.json for excluded JIRAs.
+
+    If a prior execution record exists, all existing fields (log paths, platform,
+    duration, etc.) are preserved — only ``status`` and ``reason`` are overwritten.
+    If no prior record exists, a minimal entry is created.
+    """
+    if not exclusion_map:
+        return
+
+    exec_path = Path(EXECUTIONS_FILE)
+    exec_data = {}
+    if exec_path.exists():
+        try:
+            with open(exec_path) as f:
+                exec_data = json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to read {EXECUTIONS_FILE}: {e}")
+
+    for jira_id, reason in exclusion_map.items():
+        existing = exec_data.get(jira_id, {})
+        existing["jira_id"] = jira_id
+        existing["reason"] = reason
+        if "status" not in existing:
+            existing["status"] = "excluded"
+        if "start_time" not in existing:
+            existing["start_time"] = datetime.now().isoformat()
+        exec_data[jira_id] = existing
+
+    try:
+        exec_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(exec_path, "w") as f:
+            json.dump(exec_data, f, indent=2)
+        logger.info(f"Updated {EXECUTIONS_FILE} with {len(exclusion_map)} excluded JIRAs")
+    except Exception as e:
+        logger.warning(f"Failed to write excluded entries: {e}")
 
 
 def parse_args():
@@ -36,6 +103,8 @@ def parse_args():
         epilog="""
 Examples:
   python -m src.main                                        Full pipeline
+  python -m src.main --verification-type pre                Only pre-verification JIRAs
+  python -m src.main --verification-type post               Only post-verification JIRAs
   python -m src.main --execute-only                         Re-execute all with RHOS-D kernels
   python -m src.main --execute-only --retry-failed          Re-execute only previously failed
   python -m src.main --execute-only --jira-ids RHEL-142095  Execute specific JIRAs
@@ -77,6 +146,12 @@ Examples:
         "--skip-dashboard",
         action="store_true",
         help="Disable automatic dashboard publishing after each test",
+    )
+    parser.add_argument(
+        "--verification-type",
+        choices=["pre", "post"],
+        metavar="TYPE",
+        help="Only run JIRAs matching this verification type (pre or post)",
     )
     return parser.parse_args()
 
@@ -140,6 +215,28 @@ def run_execute_only(args, logger):
     if not all_commands:
         logger.error("No commands available. Run the full pipeline first.")
         return
+
+    # Apply exclusion list
+    exclusion_map = load_exclusion_list(logger)
+    if exclusion_map:
+        before = len(all_commands)
+        excluded = [(c["jira_id"], exclusion_map[c["jira_id"]]) for c in all_commands if c["jira_id"] in exclusion_map]
+        all_commands = [c for c in all_commands if c["jira_id"] not in exclusion_map]
+        if excluded:
+            logger.info(f"Exclusion list: filtering out {len(excluded)} JIRAs:")
+            for jid, reason in excluded:
+                logger.info(f"  - {jid}: {reason}")
+            logger.info(f"Remaining commands: {before} -> {len(all_commands)}")
+            record_excluded_jiras(
+                {jid: reason for jid, reason in excluded}, logger
+            )
+
+    # Apply verification type filter
+    if args.verification_type:
+        target = args.verification_type
+        before = len(all_commands)
+        all_commands = [c for c in all_commands if c.get("verification_type") == target]
+        logger.info(f"--verification-type {target}: {before} -> {len(all_commands)} commands")
 
     # Apply filters
     executable_commands = all_commands
@@ -227,27 +324,59 @@ def run_execute_only(args, logger):
         logger.info(f"Executing {i}/{len(executable_commands)}: {exec_cmd['jira_id']}")
         logger.info(f"{'=' * 80}")
 
-        # Update inventory image-name to baseline for THIS JIRA
+        # Update baseline image for THIS JIRA
         jira_id = exec_cmd["jira_id"]
         baseline_info = rhosd_baselines.get(jira_id, {})
         baseline_image = baseline_info.get("baseline_image")
-        inv_path = exec_cmd.get("inventory")
-        if baseline_image and inv_path:
-            inv_full_path = Path("cephci") / inv_path
-            if inv_full_path.exists():
-                try:
-                    with open(inv_full_path) as f:
-                        inv_data = yaml.safe_load(f)
-                    current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
-                    if current_image != baseline_image:
-                        inv_data["instance"]["create"]["image-name"] = baseline_image
-                        with open(inv_full_path, "w") as f:
-                            yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
-                        logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
-                    else:
-                        logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
-                except Exception as e:
-                    logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
+        is_rhel8 = baseline_info.get("is_rhel8", False)
+
+        if is_rhel8 and baseline_image:
+            # RHEL-8: update openstack image-name in global conf (node4 + node5)
+            gc_path = baseline_info.get("global_conf")
+            if gc_path:
+                gc_full_path = Path("cephci") / gc_path
+                if gc_full_path.exists():
+                    try:
+                        with open(gc_full_path) as f:
+                            gc_data = yaml.safe_load(f)
+                        updated = 0
+                        for glob_entry in gc_data.get("globals", []):
+                            cluster = glob_entry.get("ceph-cluster", {})
+                            for node_key, node_val in cluster.items():
+                                if not isinstance(node_val, dict):
+                                    continue
+                                img_block = node_val.get("image-name")
+                                if isinstance(img_block, dict) and "openstack" in img_block:
+                                    old_img = img_block["openstack"]
+                                    if old_img != baseline_image:
+                                        img_block["openstack"] = baseline_image
+                                        updated += 1
+                        if updated:
+                            with open(gc_full_path, "w") as f:
+                                yaml.dump(gc_data, f, default_flow_style=False, sort_keys=False)
+                            logger.info(f"  🔄 Global conf updated: {updated} openstack image(s) -> '{baseline_image}'")
+                        else:
+                            logger.info(f"  ✅ Global conf already using correct baseline")
+                    except Exception as e:
+                        logger.warning(f"  ⚠️  Failed to update global conf {gc_path}: {e}")
+        elif baseline_image:
+            inv_path = exec_cmd.get("inventory")
+            if inv_path:
+                inv_full_path = Path("cephci") / inv_path
+                if inv_full_path.exists():
+                    try:
+                        with open(inv_full_path) as f:
+                            inv_data = yaml.safe_load(f)
+                        current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
+                        if current_image != baseline_image:
+                            inv_data["instance"]["create"]["image-name"] = baseline_image
+                            with open(inv_full_path, "w") as f:
+                                yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
+                            logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
+                        else:
+                            logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
+                    except Exception as e:
+                        logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
 
         success, stdout, stderr = executor.execute_command(
             jira_id=exec_cmd["jira_id"],
@@ -256,6 +385,7 @@ def run_execute_only(args, logger):
             dry_run=False,
             verification_type=exec_cmd.get("verification_type"),
             jira_kernel=exec_cmd.get("jira_kernel"),
+            fix_version=exec_cmd.get("fix_version"),
         )
 
         if success:
@@ -482,6 +612,35 @@ def main():
         
         logger.info("=" * 60)
 
+        # Verification type filtering
+        if args.verification_type and jira_issues:
+            target = args.verification_type
+            before = len(jira_issues)
+            jira_issues = [i for i in jira_issues if i.get('verification_type') == target]
+            logger.info(f"--verification-type {target}: {before} -> {len(jira_issues)} JIRAs")
+
+        # Exclusion list filtering
+        exclusion_map = load_exclusion_list(logger)
+        if exclusion_map and jira_issues:
+            before = len(jira_issues)
+            excluded_ids = []
+            remaining = []
+            for issue in jira_issues:
+                jid = issue.get("jira_id")
+                if jid in exclusion_map:
+                    excluded_ids.append((jid, exclusion_map[jid]))
+                else:
+                    remaining.append(issue)
+            if excluded_ids:
+                logger.info(f"Exclusion list: filtering out {len(excluded_ids)} JIRAs:")
+                for jid, reason in excluded_ids:
+                    logger.info(f"  - {jid}: {reason}")
+                jira_issues = remaining
+                logger.info(f"Remaining JIRAs: {before} -> {len(jira_issues)}")
+                record_excluded_jiras(
+                    {jid: reason for jid, reason in excluded_ids}, logger
+                )
+
         # Phase 2.5 - Pre-validation: skip JIRAs already passed in dashboard
         logger.info("=" * 60)
         logger.info("Phase 2.5: Pre-Validation — Skip Already-Passed JIRAs")
@@ -583,6 +742,14 @@ def main():
             success, msg = repo_manager.ensure_repo_exists()
             if success:
                 logger.info(f"✅ {msg}")
+                # Re-apply patches after git pull (which resets working tree)
+                patches_script = Path("docker/patches/apply_patches.py")
+                if patches_script.exists():
+                    import subprocess as _sp
+                    _sp.run(
+                        ["python3", str(patches_script), repo_manager.local_path],
+                        capture_output=False,
+                    )
             else:
                 logger.warning(f"⚠️  {msg}")
                 logger.warning("Validation may fail due to missing repository")
@@ -776,12 +943,45 @@ def main():
                     for cmd in commands:
                         if cmd.get('jira_id') == jira_id:
                             inventory = cmd.get('inventory')
+                            is_rhel8 = cmd.get('is_rhel8', False)
                             if inventory and repo_kernel:
-                                jira_search_list.append({
-                                    'jira_id': jira_id,
-                                    'inv_path': inventory,
-                                    'jira_kernel': repo_kernel,
-                                })
+                                if is_rhel8:
+                                    # RHEL-8: search RHOS-D using RHEL-8 image pattern
+                                    fv = issue.get('fix_versions', [])
+                                    rhel8_minor = None
+                                    for v in fv:
+                                        cv = v.replace('rhel-', '').replace('RHEL-', '')
+                                        parts = cv.split('.')
+                                        if len(parts) >= 2 and parts[0] == '8':
+                                            rhel8_minor = f"{parts[0]}.{parts[1]}"
+                                            break
+                                    if rhel8_minor:
+                                        rhel8_inv_key = f"conf/inventory/rhel-{rhel8_minor}-server-x86_64.yaml"
+                                        rhel8_image = f"RHEL-{rhel8_minor}.0-x86_64-ga-latest"
+                                        if rhel8_inv_key not in image_info_map:
+                                            image_info_map[rhel8_inv_key] = {
+                                                'image_name': rhel8_image,
+                                                'version_id': rhel8_minor,
+                                                'vm_size': 'ci.standard.medium',
+                                            }
+                                            logger.info(f"  Added synthetic RHEL-8 image info: {rhel8_image}")
+                                        jira_search_list.append({
+                                            'jira_id': jira_id,
+                                            'inv_path': rhel8_inv_key,
+                                            'jira_kernel': repo_kernel,
+                                            'is_rhel8': True,
+                                            'global_conf': cmd.get('global_conf'),
+                                        })
+                                    else:
+                                        logger.warning(f"  Could not derive RHEL-8 minor version for {jira_id}")
+                                else:
+                                    jira_search_list.append({
+                                        'jira_id': jira_id,
+                                        'inv_path': inventory,
+                                        'jira_kernel': repo_kernel,
+                                        'is_rhel8': False,
+                                        'global_conf': cmd.get('global_conf'),
+                                    })
                             break
                 
                 logger.info(f"Built per-JIRA search list: {len(jira_search_list)} JIRAs")
@@ -842,6 +1042,8 @@ def main():
                                 'jira_kernel': item['jira_kernel'],
                                 'baseline_image': cached['baseline_image'],
                                 'baseline_kernel': cached['baseline_kernel'],
+                                'is_rhel8': item.get('is_rhel8', False),
+                                'global_conf': item.get('global_conf'),
                             }
                             rhosd_kernel_map[item['jira_id']] = cached['baseline_kernel']
                     
@@ -889,6 +1091,10 @@ def main():
             if commands and rhosd_jira_baselines:
                 vtype_map = {issue.get('jira_id'): issue.get('verification_type', 'N/A') for issue in jira_issues}
                 jira_kernel_map = {issue.get('jira_id'): issue.get('repo_kernel_version', 'N/A') for issue in jira_issues}
+                fix_version_map = {}
+                for issue in jira_issues:
+                    fv = issue.get('fix_versions', [])
+                    fix_version_map[issue.get('jira_id')] = fv[0] if fv else 'N/A'
 
                 # Extract platform from command string
                 def _platform_from_cmd(cmd_str):
@@ -908,6 +1114,8 @@ def main():
 
                     baseline = rhosd_jira_baselines.get(jira_id)
 
+                    fix_version = fix_version_map.get(jira_id, 'N/A')
+
                     if baseline and baseline.get('baseline_kernel'):
                         executable_commands.append({
                             'jira_id': jira_id,
@@ -917,7 +1125,10 @@ def main():
                             'inventory': inventory,
                             'verification_type': vtype,
                             'jira_kernel': jira_kernel,
+                            'fix_version': fix_version,
                             'platform': platform,
+                            'is_rhel8': cmd.get('is_rhel8', False),
+                            'global_conf': cmd.get('global_conf'),
                         })
                     else:
                         skipped_commands.append({
@@ -925,6 +1136,7 @@ def main():
                             'inventory': inventory,
                             'verification_type': vtype,
                             'jira_kernel': jira_kernel,
+                            'fix_version': fix_version,
                             'platform': platform,
                         })
 
@@ -940,6 +1152,7 @@ def main():
                             'inventory': sc.get('inventory'),
                             'platform': sc.get('platform'),
                             'jira_kernel': sc.get('jira_kernel'),
+                            'fix_version': sc.get('fix_version'),
                             'verification_type': sc['verification_type'],
                             'start_time': datetime.now().isoformat(),
                         }
@@ -995,25 +1208,58 @@ def main():
                             logger.info(f"Executing {i}/{len(executable_commands)}: {exec_cmd['jira_id']}")
                             logger.info(f"{'='*80}")
                             
-                            # Update inventory image-name to baseline for THIS JIRA
+                            # Update baseline image for THIS JIRA
                             baseline_image = exec_cmd.get('baseline_image')
-                            inv_path = exec_cmd.get('inventory')
-                            if baseline_image and inv_path:
-                                inv_full_path = Path("cephci") / inv_path
-                                if inv_full_path.exists():
-                                    try:
-                                        with open(inv_full_path) as f:
-                                            inv_data = yaml.safe_load(f)
-                                        current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
-                                        if current_image != baseline_image:
-                                            inv_data["instance"]["create"]["image-name"] = baseline_image
-                                            with open(inv_full_path, "w") as f:
-                                                yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
-                                            logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
-                                        else:
-                                            logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
-                                    except Exception as e:
-                                        logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
+                            if exec_cmd.get('is_rhel8') and baseline_image:
+                                # RHEL-8: update openstack image-name in global conf (node4 + node5)
+                                gc_path = exec_cmd.get('global_conf')
+                                if gc_path:
+                                    gc_full_path = Path("cephci") / gc_path
+                                    if gc_full_path.exists():
+                                        try:
+                                            with open(gc_full_path) as f:
+                                                gc_data = yaml.safe_load(f)
+                                            updated = 0
+                                            for glob_entry in gc_data.get("globals", []):
+                                                cluster = glob_entry.get("ceph-cluster", {})
+                                                for node_key, node_val in cluster.items():
+                                                    if not isinstance(node_val, dict):
+                                                        continue
+                                                    img_block = node_val.get("image-name")
+                                                    if isinstance(img_block, dict) and "openstack" in img_block:
+                                                        old_img = img_block["openstack"]
+                                                        if old_img != baseline_image:
+                                                            img_block["openstack"] = baseline_image
+                                                            updated += 1
+                                            if updated:
+                                                with open(gc_full_path, "w") as f:
+                                                    yaml.dump(gc_data, f, default_flow_style=False, sort_keys=False)
+                                                logger.info(f"  🔄 Global conf updated: {updated} openstack image(s) -> '{baseline_image}'")
+                                            else:
+                                                logger.info(f"  ✅ Global conf already using correct baseline")
+                                        except Exception as e:
+                                            logger.warning(f"  ⚠️  Failed to update global conf {gc_path}: {e}")
+                                    else:
+                                        logger.warning(f"  ⚠️  Global conf not found: {gc_full_path}")
+                            elif baseline_image:
+                                # Non-RHEL-8: update inventory image-name as before
+                                inv_path = exec_cmd.get('inventory')
+                                if inv_path:
+                                    inv_full_path = Path("cephci") / inv_path
+                                    if inv_full_path.exists():
+                                        try:
+                                            with open(inv_full_path) as f:
+                                                inv_data = yaml.safe_load(f)
+                                            current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
+                                            if current_image != baseline_image:
+                                                inv_data["instance"]["create"]["image-name"] = baseline_image
+                                                with open(inv_full_path, "w") as f:
+                                                    yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
+                                                logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
+                                            else:
+                                                logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
+                                        except Exception as e:
+                                            logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
                             
                             success, stdout, stderr = executor.execute_command(
                                 jira_id=exec_cmd['jira_id'],
@@ -1022,6 +1268,7 @@ def main():
                                 dry_run=False,
                                 verification_type=exec_cmd.get('verification_type'),
                                 jira_kernel=exec_cmd.get('jira_kernel'),
+                                fix_version=exec_cmd.get('fix_version'),
                             )
                             
                             if success:

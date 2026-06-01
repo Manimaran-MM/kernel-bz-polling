@@ -1,0 +1,20 @@
+# JIRA Exclusion List
+# JIRAs listed here will be skipped during execution.
+# They will still be fetched from JIRA but filtered out before command building/execution.
+#
+# Format:
+#   - id: RHEL-XXXXX
+#     reason: "Brief explanation of why this JIRA is excluded"
+#
+# Examples:
+#   - id: RHEL-142095
+#     reason: "Known environment issue on magna002 — not a kernel bug"
+#   - id: RHEL-150000
+#     reason: "Duplicate of RHEL-149999"
+
+# excluded_jiras: []
+excluded_jiras:
+ - id: RHEL-142088
+   reason: "Manual trigger is needed since rhel-7 needs cross build verification"
+ - id: RHEL-143869
+   reason: "Manual trigger is needed since rhel-7 needs cross build verification"

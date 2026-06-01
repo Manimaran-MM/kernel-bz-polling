@@ -37,8 +37,15 @@ debug_*.py
 # Data directory (mounted as volume, not baked into image)
 data/
 
+# CephCI repo (cloned at runtime by entrypoint)
+cephci/
+
 # The actual .env has secrets; loaded at runtime via env_file
 .env
+
+# Saved images / archives
+*.tar.gz
+*.tar
 
 # OS junk
 .DS_Store
