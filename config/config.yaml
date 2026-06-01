@@ -1,0 +1,127 @@
+# Main Configuration File for Kernel BZ Polling System
+
+application:
+  name: "Kernel BZ Polling System"
+  version: "1.0.0"
+  environment: "production"  # development, staging, production
+
+jira:
+  server: "${JIRA_SERVER}"
+  api_token: "${JIRA_API_TOKEN}"
+  email: "${JIRA_EMAIL}"
+  max_results: 100
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 5
+
+cephci:
+  repo_url: "${CEPHCI_REPO_URL}"
+  branch: "${CEPHCI_BRANCH}"
+  default_branch: "master"
+  local_path: "${CEPHCI_LOCAL_PATH}"
+  repo_path: "/ceph/cephci"
+  log_dir: "./data/logs/kernel-logs"
+  python_executable: "python3"
+  default_params:
+    log_level: "DEBUG"
+    cloud: "openstack"
+    skip_sos_report: true
+    store: true
+  timeout: 14400  # 4 hours in seconds
+  # RHEL version to rhbuild mapping
+  # Maps major version (e.g., 10.x.x -> 10 -> 9.1)
+  # Any version starting with the major number will use this mapping
+  # Examples: 10.0, 10.1, 10.2 all map to 9.1
+  #           9.0, 9.1, 9.6 all map to 9.1
+  #           8.0, 8.10 all map to 5.3
+  rhbuild_mapping:
+    "10": "9.1"  # RHEL 10.x -> rhbuild 9.1
+    "9": "9.1"   # RHEL 9.x -> rhbuild 9.1
+    "8": "5.3"   # RHEL 8.x -> rhbuild 5.3
+    "7": "5.3"   # RHEL 7.x -> rhbuild 5.3
+  
+  # RHEL version to inventory mapping
+  # Maps major version to inventory file
+  # Any version starting with the major number will use this mapping
+  inventory_mapping:
+    "10": "conf/inventory/rhel-10.0-server-x86_64.yaml"  # RHEL 10.x
+    "9": "conf/inventory/rhel-9.4-server-x86_64.yaml"    # RHEL 9.x
+    "8": "conf/inventory/rhel-8.10-server-x86_64.yaml"   # RHEL 8.x
+    "7": "conf/inventory/rhel-7.9-server-x86_64.yaml"    # RHEL 7.x
+  # Kernel verification parameters
+  kernel_verification:
+    global_conf: "conf/squid/cephfs/kernel_verification.yaml"
+    suite: "suites/tentacle/cephfs/kernel_pre_verification.yaml"
+    osp_cred: "osp/osp-cred-ci-2.yaml"
+    build: "stable"
+  # Supported branches
+  branches:
+    - "master"
+    - "rhel-8"
+    - "rhel-9"
+    - "pacific"
+    - "quincy"
+    - "reef"
+  
+openstack:
+  auth_url: "${OPENSTACK_AUTH_URL}"
+  username: "${OPENSTACK_USERNAME}"
+  password: "${OPENSTACK_PASSWORD}"
+  project_name: "${OPENSTACK_PROJECT_NAME}"
+  domain: "${OPENSTACK_DOMAIN}"
+  tenant_domain_id: "${OPENSTACK_TENANT_DOMAIN_ID}"
+  region: "${OPENSTACK_REGION}"
+  auth_version: "3.x_appcred"
+  image_filters:
+    - "rhel-9"
+    - "x86_64"
+  
+storage:
+  log_host: "${LOG_STORAGE_HOST}"
+  log_path: "${LOG_STORAGE_PATH}"
+  log_user: "${LOG_STORAGE_USER}"
+  ssh_key_path: "${SSH_KEY_PATH}"
+  connection_timeout: 30
+  transfer_timeout: 600
+  
+scheduler:
+  poll_interval_hours: ${POLL_INTERVAL_HOURS}
+  poll_time_utc: "${POLL_TIME_UTC}"
+  max_concurrent_jobs: ${MAX_CONCURRENT_JOBS}
+  job_timeout_hours: 6
+  enable_scheduler: true
+  
+logging:
+  level: "${LOG_LEVEL}"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  date_format: "%Y-%m-%d %H:%M:%S"
+  log_dir: "${LOG_DIR}"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+  console_output: true
+  file_output: true
+  
+dashboard:
+  port: ${DASHBOARD_PORT}
+  host: "${DASHBOARD_HOST}"
+  stats_update_interval: ${STATS_UPDATE_INTERVAL}
+  enable_cors: true
+  data_retention_days: 90
+  
+cache:
+  jira_cache_dir: "${JIRA_CACHE_DIR}"
+  cache_expiry_hours: 24
+  enable_cache: true
+  
+paths:
+  config_dir: "${CONFIG_DIR}"
+  data_dir: "./data"
+  generated_configs_dir: "./data/generated_configs"
+  
+notifications:
+  enable_email: false
+  email_recipients: []
+  enable_slack: false
+  slack_webhook: ""
+
+# Made with Bob

@@ -1,0 +1,43 @@
+# Core dependencies
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# JIRA integration
+jira==3.5.2
+requests==2.31.0
+
+# Scheduling
+apscheduler==3.10.4
+
+# OpenStack SDK for RHOS-D
+openstacksdk==2.1.0
+python-openstackclient==6.3.0
+
+# SSH and file transfer
+paramiko==3.4.0
+scp==0.14.5
+
+# Web framework for dashboard API
+flask==3.0.0
+flask-cors==4.0.0
+
+# Data handling
+pandas==2.1.4
+
+# Logging and monitoring
+colorlog==6.8.0
+
+# Git operations
+gitpython==3.1.40
+
+# Command execution
+subprocess32==3.5.4; python_version < '3.0'
+
+# Date/time handling
+python-dateutil==2.8.2
+
+# JSON handling
+jsonschema==4.20.0
+
+# HTTP client
+urllib3==2.1.0

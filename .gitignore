@@ -216,3 +216,42 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific
+# Data directories
+data/
+data/jira_cache/
+data/logs/
+data/generated_configs/
+
+# CephCI local repository
+cephci/
+
+# Generated configuration files
+*.generated.yaml
+
+# SSH keys (should never be committed)
+*.pem
+*.key
+id_rsa*
+
+# Terminal output logs
+terminal_output_*.log
+nohup.out
+
+# Dashboard generated data
+dashboard/data/*.json
+
+
+# CephCI submodule (cloned locally)
+# Ignore both relative path and absolute path locations
+cephci/
+/opt/cephci/
+
+# Docker image archives
+*.tar.gz
+
+# Debug and ad-hoc test scripts
+debug_*.py
+test_*.py
+!/tests/

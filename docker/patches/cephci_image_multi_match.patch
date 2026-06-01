@@ -1,0 +1,26 @@
+--- a/compute/openstack.py
++++ b/compute/openstack.py
+@@ -328,10 +328,18 @@ class CephVMNodeV2:
+         url = f"/v2/images?name={name}"
+         object_ = self.driver.image_connection.request(url).object
+         images = self.driver._to_images(object_, ex_only_active=False)
+ 
+-        if len(images) != 1:
+-            raise ExactMatchFailed(
+-                f"Found none or more than one image resource with name: {name}"
+-            )
++        if len(images) == 1:
++            return images[0]
+ 
+-        return images[0]
++        if len(images) > 1:
++            active = [i for i in images if i.extra.get("status", "").lower() == "active"]
++            if active:
++                active.sort(key=lambda i: i.extra.get("created", ""), reverse=True)
++                return active[0]
++            return images[0]
++
++        raise ExactMatchFailed(
++            f"Found none or more than one image resource with name: {name}"
++        )
+ 

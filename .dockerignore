@@ -1,0 +1,55 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+tests/
+test_*.py
+
+# Debug scripts
+debug_*.py
+
+# Data directory (mounted as volume, not baked into image)
+data/
+
+# The actual .env has secrets; loaded at runtime via env_file
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Docs (not needed inside container)
+docs/
+
+# Dev dependencies
+requirements-dev.txt
+
+# Docker folder - exclude everything except entrypoint.sh (needed by COPY)
+docker/Dockerfile
+docker/docker-compose.yml
