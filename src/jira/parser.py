@@ -7,6 +7,26 @@ from typing import Dict, Any, List, Optional, Union
 from src.utils.logger import get_logger
 
 
+def normalize_fixed_in_build(value: str) -> str:
+    """Normalize Fixed in Build to a single kernel NVR.
+
+    JIRA may list multiple builds separated by ``|`` (e.g. RT and non-RT).
+    When multiple values are present, prefer the non-RT ``kernel-`` build.
+    """
+    if not value or not str(value).strip():
+        return ""
+
+    parts = [p.strip() for p in str(value).split("|") if p.strip()]
+    if len(parts) <= 1:
+        return parts[0] if parts else str(value).strip()
+
+    non_rt = [p for p in parts if not p.startswith("kernel-rt-")]
+    if non_rt:
+        return non_rt[0]
+
+    return parts[0]
+
+
 class JiraParser:
     """Parser for extracting data from JIRA issue dictionaries."""
     
@@ -198,12 +218,18 @@ class JiraParser:
             fixed_in_build = fields.get('customfield_10578')
             if fixed_in_build:
                 if isinstance(fixed_in_build, str):
-                    return fixed_in_build
+                    raw = fixed_in_build
                 elif isinstance(fixed_in_build, dict):
-                    # If it's a dict, try to get a value field
-                    return fixed_in_build.get('value', str(fixed_in_build))
+                    raw = fixed_in_build.get('value', str(fixed_in_build))
                 else:
-                    return str(fixed_in_build)
+                    raw = str(fixed_in_build)
+
+                normalized = normalize_fixed_in_build(raw)
+                if normalized != raw.strip():
+                    self.logger.info(
+                        f"Normalized Fixed in Build: '{raw}' -> '{normalized}'"
+                    )
+                return normalized
             return ""
         except Exception as e:
             self.logger.error(f"Error extracting fixed in build: {e}")

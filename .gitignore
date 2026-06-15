@@ -224,8 +224,8 @@ data/jira_cache/
 data/logs/
 data/generated_configs/
 
-# CephCI local repository
-cephci/
+# CephCI local repository (top-level clone only)
+/cephci/
 
 # Generated configuration files
 *.generated.yaml
@@ -244,8 +244,6 @@ dashboard/data/*.json
 
 
 # CephCI submodule (cloned locally)
-# Ignore both relative path and absolute path locations
-cephci/
 /opt/cephci/
 
 # Docker image archives

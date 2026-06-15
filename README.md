@@ -2,55 +2,69 @@
 
 Automated JIRA polling and CephCI testing system for kernel BZ verification.
 
-## 🎯 Overview
+## Overview
 
 This system automates the process of:
 - Polling JIRA for kernel CephFS bug reports
-- Extracting test requirements from JIRA tickets
-- Fetching appropriate RHOS-D images
-- Building and executing CephCI test commands
-- Managing test logs in centralized storage
-- Providing a dashboard for monitoring test status
+- Extracting test requirements (pre/post verification) from JIRA tickets
+- Fetching appropriate RHOS-D baseline images and kernels
+- Building and executing CephCI test commands (including RHEL-8 specific handling)
+- Managing test logs via SCP to centralized storage
+- Publishing results to a GitHub Pages dashboard
 
-## 📋 Features
+## Workflow
 
-- **Automated JIRA Polling**: Daily queries for kernel CephFS integration tickets
-- **Intelligent Parsing**: Extracts kernel versions, build info, and test requirements from JIRA
-- **RHOS-D Integration**: Automatically fetches and matches OpenStack images
-- **CephCI Execution**: Builds and runs CephCI commands with custom configurations
-- **Log Management**: Transfers logs to centralized storage via SSH
-- **Dashboard**: Real-time monitoring of test pipeline and results
-- **Containerized**: Fully containerized with Docker for easy deployment
-- **Flexible Branch Support**: Run CephCI tests from different branches
+The pipeline runs in 8 sequential phases:
 
-## 🏗️ Architecture
+```
+Phase 1: JIRA Integration           — Fetch issues from JIRA via JQL query
+Phase 2: Pre-Validation             — Skip JIRAs already passed in dashboard
+Phase 3: CephCI Command Builder     — Build CephCI run.py commands per JIRA
+Phase 4: Inventory File Validation  — Validate required CephCI files exist
+Phase 5: Inventory File Generation  — Generate missing inventory files
+Phase 6: Image Information Extract  — Parse inventory files for RHOS-D image info
+Phase 7: RHOS-D Kernel Resolution   — Find baseline images/kernels from RHOS-D
+Phase 8: Command Execution          — Execute CephCI commands, publish dashboard
+```
+
+## Project Structure
 
 ```
 kernel-bz-polling/
-├── src/                    # Source code
-│   ├── jira/              # JIRA integration
-│   ├── cephci/            # CephCI command builder & executor
-│   ├── rhosd/             # RHOS-D image management
-│   ├── storage/           # Log management
-│   ├── scheduler/         # Job scheduling
-│   ├── dashboard/         # Dashboard backend
-│   └── utils/             # Utilities (config, logging)
-├── config/                # Configuration files
-├── docker/                # Docker configuration
-├── dashboard/             # GitHub Pages dashboard
-└── data/                  # Runtime data (gitignored)
+├── src/
+│   ├── main.py               # Entry point — orchestrates Phases 1-8
+│   ├── jira/                  # JIRA REST API client and parser
+│   ├── cephci/                # Command builder, executor, inventory, repo manager
+│   ├── rhosd/                 # RHOS-D Glance image API and kernel resolution
+│   ├── dashboard/             # GitHub Pages dashboard publisher
+│   └── utils/                 # Config manager, logging
+├── config/
+│   ├── config.yaml            # App settings (rhbuild, suites, paths)
+│   ├── jira_queries.yaml      # JQL query definitions
+│   └── exclusion_list.yaml    # JIRAs to skip from execution
+├── docker/
+│   ├── Dockerfile             # Container image definition
+│   ├── entrypoint.sh          # Container startup (SSH, CephCI clone, patches)
+│   └── patches/               # Runtime CephCI patches
+├── systemd/
+│   ├── kernel-bz-polling.service  # Systemd service unit for podman run
+│   ├── kernel-bz-polling.timer    # Timer unit (alternate-day schedule)
+│   └── README.md                  # VM setup instructions
+├── .env.example               # Environment variable template
+├── requirements.txt           # Python dependencies
+└── data/                      # Runtime data — logs, caches, configs (gitignored)
 ```
 
-## 🚀 Quick Start
+## Prerequisites
 
-### Prerequisites
-
-- Docker and Docker Compose
-- SSH access to log storage server (magna002.ceph.redhat.com)
+- Podman (or Docker for building)
+- SSH key for remote log storage (`~/.ssh/id_rsa`)
+- CephCI config file (`~/.cephci.yaml`)
 - JIRA API token
 - OpenStack credentials for RHOS-D
+- GitHub token for dashboard publishing
 
-### Installation
+## Setup
 
 1. **Clone the repository**
    ```bash
@@ -61,202 +75,108 @@ kernel-bz-polling/
 2. **Create environment file**
    ```bash
    cp .env.example .env
+   # Edit .env with your credentials
    ```
 
-3. **Edit `.env` with your credentials**
+3. **Build the container image**
    ```bash
-   # Required: JIRA credentials
-   JIRA_SERVER=https://redhat.atlassian.net
-   JIRA_API_TOKEN=your_token_here
-   JIRA_EMAIL=your_email@redhat.com
-   
-   # Required: OpenStack credentials
-   OPENSTACK_USERNAME=your_username
-   OPENSTACK_PASSWORD=your_password
-   
-   # Required: SSH key path for log storage
-   SSH_KEY_PATH=~/.ssh/id_rsa
+   docker build --platform linux/amd64 -t kernel-bz-polling:amd64 -f docker/Dockerfile .
    ```
 
-4. **Build and run with Docker**
+4. **Transfer to the VM** (if building on a different machine)
    ```bash
-   cd docker
-   docker-compose up -d
+   docker save kernel-bz-polling:amd64 | gzip > kernel-bz-polling-amd64.tar.gz
+   scp kernel-bz-polling-amd64.tar.gz user@vm-host:~/
    ```
-
-5. **Check logs**
+   On the VM:
    ```bash
-   docker-compose logs -f kernel-bz-polling
+   podman load -i kernel-bz-polling-amd64.tar.gz
    ```
 
-### Local Development
+## Running
 
-1. **Create virtual environment**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+Ensure the `.env` file exists in the current directory with your credentials before running. See `.env.example` for the template.
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   pip install -r requirements-dev.txt  # For development
-   ```
-
-3. **Run the application**
-   ```bash
-   python -m src.main
-   ```
-
-## 📝 Configuration
-
-### Main Configuration (`config/config.yaml`)
-
-Configure application settings including:
-- JIRA connection parameters
-- CephCI repository and branch
-- OpenStack credentials
-- Log storage settings
-- Scheduler settings
-- Dashboard configuration
-
-### JIRA Queries (`config/jira_queries.yaml`)
-
-Define JQL queries and parsing rules:
-- Query templates for different ticket types
-- Field mappings
-- Section identifiers for parsing JIRA descriptions
-- Default values
-
-### Environment Variables (`.env`)
-
-Sensitive credentials and environment-specific settings.
-
-## 🔧 Usage
-
-### Running Tests
-
-The system automatically polls JIRA daily and executes tests. You can also trigger manually:
+### Full pipeline (Phases 1-8)
 
 ```bash
-# TODO: Manual trigger commands will be added in Phase 7
+podman run -d --name kernel-run \
+  --env-file .env \
+  -v ./data:/app/data:Z \
+  -v ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro,Z \
+  -v ~/.cephci.yaml:/tmp/.cephci.yaml.in:ro,Z \
+  kernel-bz-polling:amd64 \
+  python3 -m src.main --yes
 ```
 
-### Viewing Dashboard
-
-Access the dashboard at: `http://localhost:5000`
-
-The dashboard shows:
-- Current polling status
-- Jobs in pipeline
-- Running tests
-- Test results and log locations
-- Historical statistics
-
-### Accessing Logs
-
-Logs are stored in two locations:
-1. **Local**: `./data/logs/`
-2. **Centralized**: `magna002.ceph.redhat.com:/ceph/ceph-qe-logs/manim/logs/kernel-logs/`
-
-## 🧪 Testing
-
-Run tests with pytest:
+### Filter by verification type
 
 ```bash
-# Run all tests
-pytest
+# Run only pre-verification JIRAs
+podman run -d --name pre-kernel-run \
+  --env-file .env \
+  -v ./data:/app/data:Z \
+  -v ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro,Z \
+  -v ~/.cephci.yaml:/tmp/.cephci.yaml.in:ro,Z \
+  kernel-bz-polling:amd64 \
+  python3 -m src.main --yes --verification-type pre
 
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/test_jira/test_client.py
+# Run only post-verification JIRAs
+podman run -d --name post-kernel-run \
+  --env-file .env \
+  -v ./data:/app/data:Z \
+  -v ~/.ssh/id_rsa:/root/.ssh/id_rsa:ro,Z \
+  -v ~/.cephci.yaml:/tmp/.cephci.yaml.in:ro,Z \
+  kernel-bz-polling:amd64 \
+  python3 -m src.main --yes --verification-type post
 ```
 
-## 📊 Implementation Phases
-
-### ✅ Phase 1: Project Foundation (COMPLETED)
-- Directory structure
-- Configuration management
-- Logging infrastructure
-- Docker containerization
-
-### 🔄 Phase 2: JIRA Integration (Next)
-- JIRA client implementation
-- Query execution
-- Content parsing
-
-### 📅 Upcoming Phases
-- Phase 3: CephCI Command Builder
-- Phase 4: RHOS-D Image Management
-- Phase 5: CephCI Executor
-- Phase 6: Log Management
-- Phase 7: Scheduler & Job Queue
-- Phase 8: Dashboard Backend
-- Phase 9: GitHub Pages Dashboard
-- Phase 10: Integration & Testing
-
-## 🤝 Contributing
-
-1. Create a feature branch
-2. Make your changes
-3. Run tests and linting
-4. Submit a pull request
-
-### Code Quality
+### View container logs
 
 ```bash
-# Format code
-black src/ tests/
-
-# Lint code
-flake8 src/ tests/
-pylint src/
-
-# Type checking
-mypy src/
+podman logs -f kernel-run
 ```
 
-## 📚 Documentation
+## Scheduled Runs (Systemd Timer)
 
-- [Architecture](docs/architecture.md) - System architecture and design
-- [Setup Guide](docs/setup.md) - Detailed setup instructions
-- [API Documentation](docs/api.md) - API reference
+A systemd timer is provided to run the pipeline automatically every other day on a RHEL VM.
+See [systemd/README.md](systemd/README.md) for setup instructions.
 
-## 🐛 Troubleshooting
+Each scheduled run creates a date-stamped data directory:
+```
+~/kernel-bz-polling/runs/
+├── 2026-06-05/
+├── 2026-06-07/
+└── 2026-06-09/
+```
 
-### Common Issues
+## Configuration
 
-1. **SSH Connection Failed**
-   - Ensure SSH key is properly mounted in Docker
-   - Verify SSH key has correct permissions (600)
-   - Check if log storage host is accessible
+All config files are baked into the container image at build time. To update, edit and rebuild.
 
-2. **JIRA Authentication Failed**
-   - Verify JIRA API token is valid
-   - Check JIRA email is correct
-   - Ensure token has required permissions
+- **`config/config.yaml`** — CephCI rhbuild mappings, kernel verification suite/conf paths, logging
+- **`config/jira_queries.yaml`** — JQL query templates for polling JIRA
+- **`config/exclusion_list.yaml`** — JIRA IDs to skip from execution (known failures), with reasons shown on the dashboard
+- **`.env`** — Secrets and environment-specific settings (JIRA token, OpenStack credentials, SSH, GitHub token)
 
-3. **OpenStack Connection Failed**
-   - Verify OpenStack credentials
-   - Check network connectivity to RHOS-D
-   - Ensure project/tenant exists
+## Logs
 
-## 📄 License
+- **Container console**: `podman logs -f <container-name>`
+- **Per-JIRA terminal logs**: `data/logs/kernel-logs/<JIRA-ID>_<pre|post>/`
+- **Remote storage**: SCP'd to `magna002:/ceph/ceph-qe-logs/manim/logs/kernel-logs/`
 
-MIT License - See LICENSE file for details
+## Dashboard
 
-## 👥 Authors
+Results are published to GitHub Pages after each test execution:
+- Sortable/filterable table of all JIRA executions
+- Clickable JIRA ID links to the JIRA ticket
+- Status indicators: passed, failed, running, excluded, skipped
+- Fields: JIRA ID, Platform, Verification Type, JIRA Kernel, JIRA Fix Version, Status, Reason, Duration, Log Dir
 
-- Manimaran (manim@redhat.com)
+## Documentation
 
-## 🔗 Links
+- [Architecture and Workflow](docs/architecture.md) -- Detailed system architecture, phase descriptions, data flow diagrams, RHEL-8 handling, and module structure
 
-- JIRA: https://redhat.atlassian.net
-- CephCI: https://github.com/Manimaran-MM/cephci
-- RHOS-D: https://rhos-d.infra.prod.upshift.rdu2.redhat.com
+## Author
 
----
-
-**Status**: Phase 1 Complete - Ready for Phase 2 Implementation
+Manimaran (manim@redhat.com)

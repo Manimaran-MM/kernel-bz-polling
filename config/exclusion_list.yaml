@@ -18,3 +18,9 @@ excluded_jiras:
    reason: "Manual trigger is needed since rhel-7 needs cross build verification"
  - id: RHEL-143869
    reason: "Manual trigger is needed since rhel-7 needs cross build verification"
+ - id: RHEL-143882
+   reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"
+ - id: RHEL-143897
+   reason: "Not required to test as it will be cleaned up as no further release planned for 9.7"
+ - id: RHEL-143900
+   reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"

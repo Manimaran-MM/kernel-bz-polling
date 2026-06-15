@@ -25,40 +25,9 @@ classifiers = [
 dependencies = [
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0.1",
-    "jira>=3.5.2",
     "requests>=2.31.0",
-    "apscheduler>=3.10.4",
-    "openstacksdk>=2.1.0",
-    "python-openstackclient>=6.3.0",
-    "paramiko>=3.4.0",
-    "scp>=0.14.5",
-    "flask>=3.0.0",
-    "flask-cors>=4.0.0",
-    "pandas>=2.1.4",
     "colorlog>=6.8.0",
-    "gitpython>=3.1.40",
-    "python-dateutil>=2.8.2",
-    "jsonschema>=4.20.0",
     "urllib3>=2.1.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.4.3",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "pytest-asyncio>=0.21.1",
-    "black>=23.12.1",
-    "flake8>=6.1.0",
-    "pylint>=3.0.3",
-    "mypy>=1.7.1",
-    "types-requests>=2.31.0.10",
-    "types-PyYAML>=6.0.12.12",
-    "types-paramiko>=3.4.0.0",
-    "sphinx>=7.2.6",
-    "sphinx-rtd-theme>=2.0.0",
-    "ipdb>=0.13.13",
-    "ipython>=8.18.1",
 ]
 
 [project.scripts]
@@ -71,72 +40,3 @@ packages = ["src"]
 line-length = 100
 target-version = ['py310', 'py311']
 include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.pytest.ini_options]
-minversion = "7.0"
-addopts = "-ra -q --strict-markers --cov=src --cov-report=term-missing --cov-report=html"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-
-[[tool.mypy.overrides]]
-module = [
-    "jira.*",
-    "openstacksdk.*",
-    "paramiko.*",
-    "scp.*",
-    "colorlog.*",
-    "git.*",
-]
-ignore_missing_imports = true
-
-[tool.pylint.messages_control]
-disable = [
-    "C0111",  # missing-docstring
-    "C0103",  # invalid-name
-    "R0913",  # too-many-arguments
-    "R0914",  # too-many-locals
-]
-
-[tool.pylint.format]
-max-line-length = 100
-
-[tool.coverage.run]
-source = ["src"]
-omit = ["*/tests/*", "*/test_*.py"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-]

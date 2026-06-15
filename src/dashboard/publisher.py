@@ -97,6 +97,7 @@ td{padding:8px 12px;vertical-align:top}
 
 <script>
 const EMBEDDED_DATA = __DATA__;
+const JIRA_BASE = '__JIRA_SERVER__';
 let DATA = EMBEDDED_DATA;
 
 async function init(){
@@ -220,7 +221,10 @@ function renderTable(){
     COLS.forEach(c=>{
       const td = document.createElement('td');
       const v = r[c.key];
-      if(c.key==='status'){
+      if(c.key==='jira_id'){
+        if(v && JIRA_BASE){ td.innerHTML = `<a href="${JIRA_BASE}/browse/${v}" target="_blank" style="color:#58a6ff;text-decoration:none;font-weight:600">${v}</a>`; }
+        else { td.textContent = v||'-'; }
+      } else if(c.key==='status'){
         td.innerHTML = `<span class="status ${v||'unknown'}">${v||'unknown'}</span>`;
       } else if(c.key==='verification_type'){
         const cls = (v||'N/A').toLowerCase().replace('/','-');
@@ -339,8 +343,10 @@ def _fetch_remote_executions(token: str, repo: str, branch: str) -> Dict:
 def generate_dashboard_html(executions: dict) -> str:
     """Render the dashboard HTML with execution data embedded."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    jira_server = os.environ.get("JIRA_SERVER", "").rstrip("/")
     data_json = json.dumps(executions, default=str)
     html = _HTML_TEMPLATE.replace("__TIMESTAMP__", timestamp)
+    html = html.replace("__JIRA_SERVER__", jira_server)
     html = html.replace("__DATA__", data_json)
     return html
 
@@ -374,10 +380,42 @@ def publish_dashboard() -> bool:
         # Fetch existing remote history and merge
         remote_history = _fetch_remote_executions(token, repo, branch)
         for _key, record in local_data.items():
-            hkey = _make_history_key(record)
-            existing = remote_history.get(hkey, {})
-            existing.update({k: v for k, v in record.items() if v is not None})
-            remote_history[hkey] = existing
+            jira_id = record.get("jira_id", "UNKNOWN")
+            vtype = record.get("verification_type")
+            is_excluded = record.get("status") == "excluded" or (
+                "reason" in record and not vtype
+            )
+
+            if is_excluded and (not vtype or vtype == "N/A"):
+                # Excluded entry with no verification type: update ALL existing
+                # remote entries for this JIRA ID instead of creating a new :N/A row
+                matched = False
+                for rkey, rval in remote_history.items():
+                    if rkey.startswith(f"{jira_id}:"):
+                        rval.update({k: v for k, v in record.items() if v is not None})
+                        matched = True
+                if not matched:
+                    hkey = _make_history_key(record)
+                    remote_history[hkey] = dict(record)
+            else:
+                hkey = _make_history_key(record)
+                existing = remote_history.get(hkey, {})
+                existing.update({k: v for k, v in record.items() if v is not None})
+                remote_history[hkey] = existing
+
+        # Remove any stale :N/A entries if a typed entry exists for the same JIRA
+        stale_keys = []
+        for rkey in remote_history:
+            if rkey.endswith(":N/A"):
+                jid = rkey.rsplit(":", 1)[0]
+                for other in remote_history:
+                    if other.startswith(f"{jid}:") and not other.endswith(":N/A"):
+                        stale_keys.append(rkey)
+                        break
+        for sk in stale_keys:
+            del remote_history[sk]
+            logger.info(f"Removed stale dashboard entry: {sk}")
+
         publish_data = remote_history
     else:
         logger.info("Local execution data is empty — publishing clean dashboard")

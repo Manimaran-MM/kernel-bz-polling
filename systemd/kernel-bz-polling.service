@@ -1,0 +1,18 @@
+[Unit]
+Description=Kernel BZ Polling - CephCI Kernel Verification
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+TimeoutStartSec=6h
+WorkingDirectory=%h/kernel-bz-polling
+ExecStartPre=-/usr/bin/podman rm -f kernel-bz-run
+ExecStartPre=/bin/bash -c 'mkdir -p ./runs/$(date +%%Y-%%m-%%d)'
+ExecStart=/bin/bash -c '/usr/bin/podman run --rm --name kernel-bz-run \
+  --env-file .env \
+  -v ./runs/$(date +%%Y-%%m-%%d):/app/data:Z \
+  -v %h/.ssh/id_rsa:/root/.ssh/id_rsa:ro,Z \
+  -v %h/.cephci.yaml:/tmp/.cephci.yaml.in:ro,Z \
+  kernel-bz-polling:amd64 \
+  python3 -m src.main --yes'

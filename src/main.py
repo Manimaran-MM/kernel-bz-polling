@@ -2,8 +2,8 @@
 Main entry point for the Kernel BZ Polling System.
 
 Usage:
-    python -m src.main                          # Full pipeline (Phases 2-4)
-    python -m src.main --execute-only           # Re-run Phase 4 from saved data
+    python -m src.main                          # Full pipeline (Phases 1-8)
+    python -m src.main --execute-only           # Re-run Phase 8 from saved data
     python -m src.main --execute-only --retry-failed
     python -m src.main --execute-only --jira-ids RHEL-142095 RHEL-143896
     python -m src.main --execute-only --dry-run
@@ -114,7 +114,7 @@ Examples:
     parser.add_argument(
         "--execute-only",
         action="store_true",
-        help="Skip Phases 2-3.7; load commands from data/command_executions.json and run Phase 4 directly",
+        help="Skip Phases 1-7; load commands from data/command_executions.json and run Phase 8 directly",
     )
     parser.add_argument(
         "--jira-ids",
@@ -183,7 +183,6 @@ def load_saved_executions(logger):
             logger.warning(f"Skipping {jira_id}: no command found in execution record")
             continue
 
-        # Extract inventory path from the command string
         inventory = None
         if "--inventory " in cmd_str:
             inv_part = cmd_str.split("--inventory ")[1]
@@ -203,7 +202,7 @@ def load_saved_executions(logger):
 
 
 def run_execute_only(args, logger):
-    """Run Phase 4 directly from persisted data, skipping Phases 2-3.7."""
+    """Run Phase 8 (execution) directly from persisted data, skipping Phases 1-7."""
     from src.cephci.command_executor import CephCIExecutor
 
     logger.info("=" * 60)
@@ -367,14 +366,22 @@ def run_execute_only(args, logger):
                     try:
                         with open(inv_full_path) as f:
                             inv_data = yaml.safe_load(f)
+                        changed = False
                         current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
                         if current_image != baseline_image:
                             inv_data["instance"]["create"]["image-name"] = baseline_image
-                            with open(inv_full_path, "w") as f:
-                                yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
-                            logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
+                            changed = True
+                            logger.info(f"  🔄 Inventory image: '{current_image}' -> '{baseline_image}'")
                         else:
                             logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
+                        vtype = exec_cmd.get("verification_type", "")
+                        if vtype == "post":
+                            inv_data["instance"]["create"]["vm-size"] = "ci.standard.large"
+                            changed = True
+                            logger.info(f"  🔄 Inventory vm-size -> ci.standard.large (post verification)")
+                        if changed:
+                            with open(inv_full_path, "w") as f:
+                                yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
                     except Exception as e:
                         logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
 
@@ -547,13 +554,10 @@ def main():
         # Display configuration
         logger.info(f"Application: {config.get('application.name')}")
         logger.info(f"Version: {config.get('application.version')}")
-        logger.info(f"Environment: {config.get('application.environment')}")
         logger.info(f"JIRA Server: {config.get('jira.server')}")
         logger.info(f"CephCI Repo: {config.get('cephci.repo_url')}")
         logger.info(f"CephCI Branch: {config.get('cephci.branch')}")
         logger.info(f"Log Level: {log_level}")
-        logger.info(f"Scheduler Enabled: {config.get('scheduler.enable_scheduler')}")
-        logger.info(f"Poll Interval: {config.get('scheduler.poll_interval_hours')} hours")
         logger.info("=" * 60)
 
         # --publish-dashboard: publish from existing data and exit
@@ -566,14 +570,14 @@ def main():
                 logger.error("Dashboard publish failed")
             return
 
-        # --execute-only: skip Phases 2-3.7, jump straight to execution
+        # --execute-only: skip Phases 1-7, jump straight to execution
         if args.execute_only:
             run_execute_only(args, logger)
             return
         
-        # Phase 2 - JIRA Integration: Fetch Real Issues
+        # Phase 1 - JIRA Integration: Fetch Real Issues
         logger.info("=" * 60)
-        logger.info("Phase 2: JIRA Integration - Fetching Issues")
+        logger.info("Phase 1: JIRA Integration - Fetching Issues")
         logger.info("=" * 60)
         
         jira_issues = []
@@ -604,11 +608,11 @@ def main():
             else:
                 logger.warning("⚠️  No JIRA issues found matching the query")
             
-            logger.info("Phase 2: JIRA Integration - COMPLETED ✅")
+            logger.info("Phase 1: JIRA Integration - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 2 error: {e}", exc_info=True)
-            logger.warning("Phase 2: JIRA Integration - Failed to fetch issues")
+            logger.error(f"Phase 1 error: {e}", exc_info=True)
+            logger.warning("Phase 1: JIRA Integration - Failed to fetch issues")
         
         logger.info("=" * 60)
 
@@ -641,9 +645,9 @@ def main():
                     {jid: reason for jid, reason in excluded_ids}, logger
                 )
 
-        # Phase 2.5 - Pre-validation: skip JIRAs already passed in dashboard
+        # Phase 2 - Pre-validation: skip JIRAs already passed in dashboard
         logger.info("=" * 60)
-        logger.info("Phase 2.5: Pre-Validation — Skip Already-Passed JIRAs")
+        logger.info("Phase 2: Pre-Validation — Skip Already-Passed JIRAs")
         logger.info("=" * 60)
 
         try:
@@ -674,9 +678,9 @@ def main():
             else:
                 logger.info("No passed entries found in dashboard (first run or fetch failed)")
 
-            logger.info("Phase 2.5: Pre-Validation - COMPLETED ✅")
+            logger.info("Phase 2: Pre-Validation - COMPLETED ✅")
         except Exception as e:
-            logger.warning(f"Phase 2.5 error (non-fatal, continuing): {e}")
+            logger.warning(f"Phase 2 error (non-fatal, continuing): {e}")
 
         logger.info("=" * 60)
         
@@ -724,9 +728,9 @@ def main():
         
         logger.info("=" * 60)
         
-        # Phase 3.5 - Inventory File Validation
+        # Phase 4 - Inventory File Validation
         logger.info("=" * 60)
-        logger.info("Phase 3.5: Inventory File Validation")
+        logger.info("Phase 4: Inventory File Validation")
         logger.info("=" * 60)
         
         validations = []
@@ -783,15 +787,15 @@ def main():
             else:
                 logger.warning("⚠️  No commands available to validate")
             
-            logger.info("Phase 3.5: Inventory File Validation - COMPLETED ✅")
+            logger.info("Phase 4: Inventory File Validation - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 3.5 error: {e}", exc_info=True)
-            logger.warning("Phase 3.5: Inventory File Validation - Failed")
+            logger.error(f"Phase 4 error: {e}", exc_info=True)
+            logger.warning("Phase 4: Inventory File Validation - Failed")
         
-        # Phase 3.8 - Generate Missing Inventory Files
+        # Phase 5 - Generate Missing Inventory Files
         logger.info("=" * 60)
-        logger.info("Phase 3.8: Generate Missing Inventory Files")
+        logger.info("Phase 5: Generate Missing Inventory Files")
         logger.info("=" * 60)
         
         try:
@@ -857,19 +861,19 @@ def main():
             else:
                 logger.warning("⚠️  No commands or repo manager available")
             
-            logger.info("Phase 3.8: Generate Missing Inventory Files - COMPLETED ✅")
+            logger.info("Phase 5: Generate Missing Inventory Files - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 3.8 error: {e}", exc_info=True)
-            logger.warning("Phase 3.8: Generate Missing Inventory Files - Failed")
+            logger.error(f"Phase 5 error: {e}", exc_info=True)
+            logger.warning("Phase 5: Generate Missing Inventory Files - Failed")
         
         logger.info("=" * 60)
         
         logger.info("=" * 60)
         
-        # Phase 3.6 - Parse Inventory Files for Image Info
+        # Phase 6 - Parse Inventory Files for Image Info
         logger.info("=" * 60)
-        logger.info("Phase 3.6: Inventory Image Information Extraction")
+        logger.info("Phase 6: Inventory Image Information Extraction")
         logger.info("=" * 60)
         
         image_info_map = {}
@@ -916,17 +920,17 @@ def main():
             else:
                 logger.warning("⚠️  No commands or repo manager available")
             
-            logger.info("Phase 3.6: Inventory Image Information Extraction - COMPLETED ✅")
+            logger.info("Phase 6: Inventory Image Information Extraction - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 3.6 error: {e}", exc_info=True)
-            logger.warning("Phase 3.6: Inventory Image Information Extraction - Failed")
+            logger.error(f"Phase 6 error: {e}", exc_info=True)
+            logger.warning("Phase 6: Inventory Image Information Extraction - Failed")
         
         logger.info("=" * 60)
         
-        # Phase 3.7 - Fetch RHOS-D Kernel Versions
+        # Phase 7 - Fetch RHOS-D Kernel Versions
         logger.info("=" * 60)
-        logger.info("Phase 3.7: RHOS-D Kernel Version Fetching")
+        logger.info("Phase 7: RHOS-D Kernel Version Fetching")
         logger.info("=" * 60)
         
         rhosd_kernel_map = {}
@@ -1068,17 +1072,17 @@ def main():
             else:
                 logger.warning("⚠️  No inventory image info available")
             
-            logger.info("Phase 3.7: RHOS-D Kernel Version Fetching - COMPLETED ✅")
+            logger.info("Phase 7: RHOS-D Kernel Version Fetching - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 3.7 error: {e}", exc_info=True)
-            logger.warning("Phase 3.7: RHOS-D Kernel Version Fetching - Failed")
+            logger.error(f"Phase 7 error: {e}", exc_info=True)
+            logger.warning("Phase 7: RHOS-D Kernel Version Fetching - Failed")
         
         logger.info("=" * 60)
         
-        # Phase 4 - Command Execution for JIRAs with RHOS-D Kernels
+        # Phase 8 - Command Execution for JIRAs with RHOS-D Kernels
         logger.info("=" * 60)
-        logger.info("Phase 4: Command Execution")
+        logger.info("Phase 8: Command Execution")
         logger.info("=" * 60)
         
         try:
@@ -1096,10 +1100,9 @@ def main():
                     fv = issue.get('fix_versions', [])
                     fix_version_map[issue.get('jira_id')] = fv[0] if fv else 'N/A'
 
-                # Extract platform from command string
                 def _platform_from_cmd(cmd_str):
                     if cmd_str and "--platform " in cmd_str:
-                        return cmd_str.split("--platform ")[1].split(" ")[0]
+                        return cmd_str.split("--platform ")[1].split(" ")[0].strip("'\"")
                     return None
 
                 executable_commands = []
@@ -1250,14 +1253,22 @@ def main():
                                         try:
                                             with open(inv_full_path) as f:
                                                 inv_data = yaml.safe_load(f)
+                                            changed = False
                                             current_image = inv_data.get("instance", {}).get("create", {}).get("image-name")
                                             if current_image != baseline_image:
                                                 inv_data["instance"]["create"]["image-name"] = baseline_image
-                                                with open(inv_full_path, "w") as f:
-                                                    yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
-                                                logger.info(f"  🔄 Inventory updated: '{current_image}' -> '{baseline_image}'")
+                                                changed = True
+                                                logger.info(f"  🔄 Inventory image: '{current_image}' -> '{baseline_image}'")
                                             else:
                                                 logger.info(f"  ✅ Inventory already using correct baseline: '{baseline_image}'")
+                                            vtype = exec_cmd.get('verification_type', '')
+                                            if vtype == 'post':
+                                                inv_data["instance"]["create"]["vm-size"] = "ci.standard.large"
+                                                changed = True
+                                                logger.info(f"  🔄 Inventory vm-size -> ci.standard.large (post verification)")
+                                            if changed:
+                                                with open(inv_full_path, "w") as f:
+                                                    yaml.dump(inv_data, f, default_flow_style=False, sort_keys=False)
                                         except Exception as e:
                                             logger.warning(f"  ⚠️  Failed to update inventory {inv_path}: {e}")
                             
@@ -1299,60 +1310,16 @@ def main():
             else:
                 logger.warning("⚠️  No commands or RHOS-D kernel data available")
             
-            logger.info("Phase 4: Command Execution - COMPLETED ✅")
+            logger.info("Phase 8: Command Execution - COMPLETED ✅")
             
         except Exception as e:
-            logger.error(f"Phase 4 error: {e}", exc_info=True)
-            logger.warning("Phase 4: Command Execution - Failed")
+            logger.error(f"Phase 8 error: {e}", exc_info=True)
+            logger.warning("Phase 8: Command Execution - Failed")
         
         logger.info("=" * 60)
-        
-        # TODO: Phase 5 - Initialize log manager
-        logger.info("Phase 5: Log Management - Not yet implemented")
-        
-        # TODO: Phase 6 - Initialize log manager
-        logger.info("Phase 6: Log Management - Not yet implemented")
-        
-        # TODO: Phase 7 - Initialize scheduler
-        logger.info("Phase 7: Scheduler & Job Queue - Not yet implemented")
-        
-        # TODO: Phase 8 - Initialize dashboard backend
-        logger.info("Phase 8: Dashboard Backend - Not yet implemented")
-        
-        # TODO: Phase 9 - Start dashboard server
-        logger.info("Phase 9: GitHub Pages Dashboard - Not yet implemented")
-        
+        logger.info("All phases completed.")
         logger.info("=" * 60)
-        logger.info("IMPLEMENTATION STATUS:")
-        logger.info("✅ Phase 1: Project Foundation - COMPLETED")
-        logger.info("✅ Phase 2: JIRA Integration - COMPLETED")
-        logger.info("✅ Phase 3: CephCI Command Builder - COMPLETED")
-        logger.info("✅ Phase 3.5: Inventory File Validation - COMPLETED")
-        logger.info("✅ Phase 3.6: Inventory Image Info Extraction - COMPLETED")
-        logger.info("✅ Phase 3.7: RHOS-D Kernel Version Fetching - COMPLETED")
-        logger.info("✅ Phase 3.8: Inventory File Generation - COMPLETED")
-        logger.info("✅ Phase 4: Command Execution - COMPLETED")
-        logger.info("⏳ Phase 5: Log Management - Pending")
-        logger.info("⏳ Phase 6: Scheduler & Job Queue - Pending")
-        logger.info("⏳ Phase 7: Dashboard Backend - Pending")
-        logger.info("=" * 60)
-        
-        # Keep the application running
-        logger.info("Application initialized successfully")
-        logger.info("Press Ctrl+C to stop")
-        
-        # TODO: Replace with actual application loop
-        import time
-        while True:
-            time.sleep(60)
-            logger.debug("Application heartbeat...")
-            
-    except KeyboardInterrupt:
-        logger = get_logger(__name__)
-        logger.info("Received shutdown signal")
-        logger.info("Shutting down gracefully...")
-        sys.exit(0)
-        
+
     except Exception as e:
         logger = get_logger(__name__)
         logger.error(f"Fatal error: {e}", exc_info=True)
@@ -1361,5 +1328,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# Made with Bob

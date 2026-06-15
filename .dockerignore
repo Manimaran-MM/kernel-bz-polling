@@ -57,6 +57,5 @@ docs/
 # Dev dependencies
 requirements-dev.txt
 
-# Docker folder - exclude everything except entrypoint.sh (needed by COPY)
+# Docker folder - exclude Dockerfile from build context (not needed inside image)
 docker/Dockerfile
-docker/docker-compose.yml
