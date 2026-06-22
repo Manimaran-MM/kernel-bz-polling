@@ -494,6 +494,16 @@ class CephCIExecutor:
         log_dir.mkdir(parents=True, exist_ok=True)
         terminal_log = log_dir / f"terminal_output_{log_key}.log"
 
+        # Save and publish 'running' status before execution starts
+        self.execution_log[jira_id] = execution_record
+        self._save_execution_log()
+        if not self.skip_dashboard:
+            try:
+                from src.dashboard.publisher import publish_dashboard
+                publish_dashboard()
+            except Exception as e:
+                self.logger.debug(f"Dashboard pre-publish skipped: {e}")
+
         try:
             self.logger.info(f"📂 Working directory: {self.cephci_repo_path}")
             self.logger.info(f"📄 Terminal output: {terminal_log}")
@@ -524,6 +534,8 @@ class CephCIExecutor:
             execution_record['status'] = 'success' if result.returncode == 0 else 'failed'
             if result.returncode != 0:
                 execution_record['reason'] = f"Command exited with return code {result.returncode}"
+            else:
+                execution_record['reason'] = None
             execution_record['terminal_log'] = str(terminal_log)
             start_dt = datetime.fromisoformat(execution_record['start_time'])
             execution_record['duration_seconds'] = round((end_time - start_dt).total_seconds())

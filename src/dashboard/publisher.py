@@ -34,7 +34,12 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
      background:#0d1117;color:#c9d1d9;padding:20px;line-height:1.5}
 h1{font-size:1.6rem;margin-bottom:4px;color:#58a6ff}
-.subtitle{color:#8b949e;font-size:.85rem;margin-bottom:20px}
+.header-row{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:20px}
+.header-left{flex:1}
+.subtitle{color:#8b949e;font-size:.85rem}
+.effort-banner{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 20px;
+  font-size:.85rem;color:#8b949e;white-space:nowrap}
+.effort-banner .effort-value{color:#3fb950;font-weight:700}
 .cards{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:24px}
 .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px 20px;min-width:130px;text-align:center}
 .card .value{font-size:1.8rem;font-weight:700}
@@ -76,8 +81,13 @@ td{padding:8px 12px;vertical-align:top}
 </style>
 </head>
 <body>
-<h1>Kernel BZ Polling — Execution Dashboard</h1>
-<p class="subtitle">Last updated: <span id="ts">__TIMESTAMP__</span></p>
+<div class="header-row">
+  <div class="header-left">
+    <h1>Kernel BZ Polling — Execution Dashboard</h1>
+    <p class="subtitle">Last updated: <span id="ts">__TIMESTAMP__</span></p>
+  </div>
+  <div class="effort-banner" id="effortBanner"></div>
+</div>
 
 <div class="cards" id="cards"></div>
 
@@ -86,6 +96,8 @@ td{padding:8px 12px;vertical-align:top}
     <select id="fStatus"><option value="">All</option></select></div>
   <div><label>Platform:</label>
     <select id="fPlatform"><option value="">All</option></select></div>
+  <div><label>Verification:</label>
+    <select id="fVtype"><option value="">All</option></select></div>
   <div><label>Search:</label>
     <input id="fSearch" placeholder="JIRA ID or kernel…" /></div>
 </div>
@@ -148,25 +160,35 @@ function renderCards(){
     <div class="card running"><div class="value">${counts.running}</div><div class="label">Running</div></div>
     <div class="card running"><div class="value">${counts.skipped}</div><div class="label">Skipped</div></div>
     <div class="card timeout"><div class="value">${counts.excluded}</div><div class="label">Excluded</div></div>`;
+
+  const sprintPoints = counts.success + counts.failed + counts.timeout + counts.error;
+  const days = (sprintPoints / 2).toFixed(1);
+  const eb = document.getElementById('effortBanner');
+  eb.innerHTML = `Manual Effort Saved: <span class="effort-value">${days} days</span> (${sprintPoints} Sprint Points)`;
 }
 
 /* filters */
 function populateFilters(){
   const statuses = [...new Set(rows.map(r=>r.status||'unknown'))].sort();
   const platforms = [...new Set(rows.map(r=>r.platform||'N/A'))].sort();
+  const vtypes = [...new Set(rows.map(r=>r.verification_type||'N/A'))].sort();
   const fS = document.getElementById('fStatus');
   const fP = document.getElementById('fPlatform');
+  const fV = document.getElementById('fVtype');
   statuses.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s;fS.appendChild(o);});
   platforms.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;fP.appendChild(o);});
+  vtypes.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;fV.appendChild(o);});
 }
 
 function getFiltered(){
   const s = document.getElementById('fStatus').value;
   const p = document.getElementById('fPlatform').value;
+  const v = document.getElementById('fVtype').value;
   const q = document.getElementById('fSearch').value.toLowerCase();
   return rows.filter(r=>{
     if(s && (r.status||'unknown')!==s) return false;
     if(p && (r.platform||'N/A')!==p) return false;
+    if(v && (r.verification_type||'N/A')!==v) return false;
     if(q){
       const hay = JSON.stringify(r).toLowerCase();
       if(!hay.includes(q)) return false;
@@ -260,6 +282,7 @@ function render(){ renderHeader(); renderTable(); }
 
 document.getElementById('fStatus').onchange = render;
 document.getElementById('fPlatform').onchange = render;
+document.getElementById('fVtype').onchange = render;
 document.getElementById('fSearch').oninput = render;
 init();
 </script>
@@ -400,7 +423,11 @@ def publish_dashboard() -> bool:
             else:
                 hkey = _make_history_key(record)
                 existing = remote_history.get(hkey, {})
-                existing.update({k: v for k, v in record.items() if v is not None})
+                for k, v in record.items():
+                    if v is not None:
+                        existing[k] = v
+                    elif k == "reason":
+                        existing.pop(k, None)
                 remote_history[hkey] = existing
 
         # Remove any stale :N/A entries if a typed entry exists for the same JIRA
