@@ -24,8 +24,8 @@ cephci:
   instance_name_prefix: "auto-kernel-jira-"
   timeout: 21600  # 6 hours in seconds
   rhbuild_mapping:
-    "10": "9.0"   # RHEL 10.x -> rhbuild 9.0
-    "9": "9.0"    # RHEL 9.x -> rhbuild 9.0
+    "10": "9.1"   # RHEL 10.x -> rhbuild 9.1
+    "9": "9.1"    # RHEL 9.x -> rhbuild 9.1
     "8": "7.1"    # RHEL 8.x -> rhbuild 7.1
     "7": "5.3"    # RHEL 7.x -> rhbuild 5.3
   inventory_mapping:
