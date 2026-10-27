@@ -56,7 +56,7 @@ class CephCICommandBuilder:
             'suite_pre_rhel8': 'suites/tentacle/cephfs/kernel-validation/kernel_pre_verification_rhel8_client.yaml',
             'suite_post_rhel8': 'suites/tentacle/cephfs/kernel-validation/kernel_post_verification_rhel8_client.yaml',
             'osp_cred': 'osp/osp-cred-ci-2.yaml',
-            'build': 'stable'
+            'build': 'stable',
         })
         
     def build_command(
@@ -232,8 +232,10 @@ class CephCICommandBuilder:
         else:
             self.logger.warning(f"No Repo URL or Fixed in Build found for {jira_id}")
         
-        # Build parameter
-        params['--build'] = self.kernel_verification.get('build', 'stable')
+        # Build parameter — RHEL 9.2 uses z0; everything else uses stable (or config default)
+        build = self._get_build(fix_versions)
+        params['--build'] = build
+        self.logger.info(f"Using build: {build} for fix versions: {fix_versions}")
         
         # Flags without values
         params['--skip-sos-report'] = ''
@@ -245,6 +247,42 @@ class CephCICommandBuilder:
         
         return params
     
+    def _get_build(self, fix_versions: List[str]) -> str:
+        """
+        Determine --build based on fix versions.
+
+        Looks up kernel_verification.build_mapping by major.minor first
+        (e.g. 9.2 -> z0), then by major (e.g. 8 -> z9). Falls back to
+        kernel_verification.build (stable).
+
+        Args:
+            fix_versions: List of fix version strings (e.g., ['rhel-9.2.0.z', '8.10.0'])
+
+        Returns:
+            build value (e.g., 'z0', 'z9', or 'stable')
+        """
+        default_build = self.kernel_verification.get('build', 'stable')
+        build_mapping = self.kernel_verification.get('build_mapping', {}) or {}
+
+        for version in fix_versions or []:
+            clean_version = version.replace('rhel-', '').replace('RHEL-', '')
+            version_parts = clean_version.split('.')
+            major_version = version_parts[0]
+            lookup_keys = []
+            if len(version_parts) >= 2:
+                lookup_keys.append(f"{version_parts[0]}.{version_parts[1]}")
+            lookup_keys.append(major_version)
+
+            for key in lookup_keys:
+                if key in build_mapping:
+                    build = build_mapping[key]
+                    self.logger.debug(
+                        f"Mapped version {version} (key: {key}) to build {build}"
+                    )
+                    return str(build)
+
+        return str(default_build)
+
     def _get_rhbuild(self, fix_versions: List[str]) -> Optional[str]:
         """
         Determine rhbuild based on fix versions.
