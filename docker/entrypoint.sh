@@ -64,7 +64,7 @@ if [ -n "$CEPHCI_REPO_URL" ]; then
         cd /app
     fi
 
-    # Apply patches to cephci
+    # Apply patches to cephci (OpenStack Glance patch skipped unless APPLY_OPENSTACK_PATCH=1)
     python3 /app/docker/patches/apply_patches.py "$CEPHCI_DIR"
 fi
 

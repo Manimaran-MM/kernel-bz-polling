@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Kernel BZ Polling System is a containerized Python application that automates kernel CephFS bug verification. It polls JIRA for tickets, resolves RHOS-D baseline images, builds and executes CephCI test commands, and publishes results to a GitHub Pages dashboard.
+The Kernel BZ Polling System is a containerized Python application that automates kernel CephFS bug verification. It polls JIRA for tickets, maps RHEL fix versions to OCPVirt baseline datasources, builds and executes CephCI test commands (`--cloud ocpvirt`), and publishes results to a GitHub Pages dashboard.
 
 ## High-Level Architecture
 
@@ -19,16 +19,16 @@ The Kernel BZ Polling System is a containerized Python application that automate
 │  ┌───────────────┐       │  └──────┬───────┬───────┬───────┬──────┘    │ │
 │  │ .env          │──────>│         │       │       │       │           │ │
 │  │ ~/.ssh/id_rsa │──────>│    ┌────▼──┐ ┌──▼───┐ ┌▼────┐ ┌▼────────┐  │ │
-│  │ ~/.cephci.yaml│──────>│    │ jira/ │ │cephci│ │rhosd│ │dashboard│  │ │
+│  │ ~/.cephci.yaml│──────>│    │ jira/ │ │cephci│ │ocpv │ │dashboard│  │ │
 │  │ data/         │<─────>│    └───┬───┘ └──┬───┘ └──┬──┘ └────┬────┘  │ │
 │  └───────────────┘       │        │        │        │          │       │ │
 │                          └────────┼────────┼────────┼──────────┼───────┘ │
 └───────────────────────────────────┼────────┼────────┼──────────┼─────────┘
                                     │        │        │          │
                          ┌──────────▼──┐ ┌───▼────┐ ┌─▼────────┐ ┌▼──────────┐
-                         │   JIRA      │ │ CephCI │ │  RHOS-D  │ │  GitHub   │
-                         │ Atlassian   │ │  Repo  │ │  Glance  │ │  Pages    │
-                         │ (REST API)  │ │  (git) │ │  (REST)  │ │  (API)    │
+                         │   JIRA      │ │ CephCI │ │ OCPVirt  │ │  GitHub   │
+                         │ Atlassian   │ │  Repo  │ │ KubeVirt │ │  Pages    │
+                         │ (REST API)  │ │  (git) │ │  (API)   │ │  (API)    │
                          └─────────────┘ └───┬────┘ └──────────┘ └───────────┘
                                              │
                                       ┌──────▼──────┐
@@ -43,7 +43,7 @@ The Kernel BZ Polling System is a containerized Python application that automate
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Container Starts                              │
 │  entrypoint.sh: SSH setup → .cephci.yaml copy → CephCI clone/pull  │
-│                 → Apply runtime patches                              │
+│                 → Optional OpenStack patch (off by default)          │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
@@ -76,61 +76,60 @@ The Kernel BZ Polling System is a containerized Python application that automate
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 3: CephCI Command Builder                                    │
-│  Build python3 run.py commands per JIRA                             │
-│  Derive: platform, rhbuild, suite, conf, inventory, custom-config   │
+│  Build python3 run.py --cloud ocpvirt commands per JIRA             │
+│  Derive: platform, rhbuild, suite, conf, ocpvirt inventory          │
+│  custom-config: ocpvirt_namespace, ocpvirt_profile, pre|post        │
 │  RHEL-8: override platform to rhel-9, use RHEL-8 suite/conf        │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 4: Inventory File Validation                                 │
-│  Clone/update CephCI repo, re-apply patches                        │
-│  Validate all referenced files exist (suite, conf, inventory)       │
+│  Clone/update CephCI repo                                            │
+│  Validate suite, conf, ocpvirt inventory paths exist                 │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 5: Inventory File Generation                                 │
-│  Generate any missing inventory YAML files from templates           │
+│  Generate missing ocpvirt inventory YAML from templates if needed   │
 │  Re-validate after generation                                       │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 6: Image Information Extraction                              │
-│  Parse inventory YAML files for image-name, vm-size, RHEL version   │
-│  Output: image_info_map keyed by inventory path                     │
+│  Parse inventory YAML for image-name (datasource://), RHEL version  │
+│  vm-size is optional (absent on ocpvirt inventories)                │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Phase 7: RHOS-D Kernel Resolution                                  │
-│  Authenticate with RHOS-D via Keystone                              │
-│  Search Glance for baseline images per JIRA                         │
-│  Fetch kernel from compose URLs (with mirror fallback)              │
-│  Select baseline: highest kernel older than JIRA kernel             │
-│  RHEL-8: search RHEL-8 images despite RHEL-9 inventory             │
-│  Output: per-JIRA baseline image + kernel                           │
+│  Phase 7: OCPVirt Baseline Datasource Mapping                       │
+│  Static RHEL → datasource:// map from config.yaml                   │
+│  e.g. 9.4 → datasource://rhel94, 9.6 → datasource://rhel96         │
+│  Unmapped RHEL versions: no baseline (skip in Phase 8)              │
+│  Output: data/baseline_images.json                                  │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 8: Command Execution                                         │
 │                                                                      │
-│  For each JIRA:                                                      │
+│  For each JIRA with a mapped baseline:                               │
 │  ┌───────────────────────────────────────────────────────────────┐   │
-│  │ 1. Update baseline image in inventory (or global conf if     │   │
-│  │    RHEL-8, updating node4+node5 openstack image-name)        │   │
+│  │ 1. Write baseline datasource into inventory (or RHEL-8       │   │
+│  │    global-conf ocpvirt/openstack image-name)                 │   │
 │  │ 2. pip install -r requirements.txt (once)                    │   │
-│  │ 3. Populate OSP credentials in osp/osp-cred-ci-2.yaml       │   │
-│  │ 4. Execute: subprocess.run() with 4-hour timeout             │   │
+│  │ 3. Write ocpvirt-credentials to osp-cred YAML                │   │
+│  │ 4. Execute: subprocess.run() with configured timeout         │   │
 │  │ 5. Save terminal log to data/logs/kernel-logs/<ID>_<type>/   │   │
-│  │ 6. Run CephCI cleanup command                                │   │
+│  │ 6. Cleanup: --cloud ocpvirt + ocpvirt_namespace              │   │
 │  │ 7. SCP logs to magna002                                      │   │
 │  │ 8. Publish results to GitHub Pages dashboard                 │   │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                      │
-│  JIRAs with no RHOS-D kernel: recorded as status=skipped            │
+│  Unmapped RHEL: status=skipped (No OCPVirt datasource mapping)      │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
@@ -209,7 +208,7 @@ src/cephci/inventory_generator.py  — Creates inventory files from templates
 
 ### Phase 6: Image Information Extraction
 
-Parses inventory YAML files to extract the current `image-name`, `vm-size`, and RHEL version.
+Parses inventory YAML files to extract `image-name` (typically `datasource://…`) and RHEL version. `vm-size` is optional and usually absent for ocpvirt inventories.
 
 ```
 src/cephci/inventory_parser.py  — Reads inventory YAML, extracts image metadata
@@ -218,26 +217,22 @@ src/cephci/inventory_parser.py  — Reads inventory YAML, extracts image metadat
 **Input:** Inventory file paths
 **Output:** `image_info_map` dict keyed by inventory path
 
-### Phase 7: RHOS-D Kernel Resolution
+### Phase 7: OCPVirt Baseline Datasource Mapping
 
-Searches RHOS-D (OpenStack Glance) for baseline images whose kernel version is older than the JIRA's kernel, selecting the most recent match.
+Maps each JIRA’s RHEL fix version to a CDI datasource alias via static config (no Glance / Keystone).
 
 ```
-src/rhosd/image_api.py      — Direct Glance REST API calls, compose URL kernel fetching
-src/rhosd/image_manager.py   — Image search and matching logic
+src/ocpvirt/baseline.py   — BaselineMapper (RHEL → datasource://)
 ```
 
 **Key logic:**
-- Authenticates with RHOS-D via Keystone
-- Searches for images matching the inventory's image name pattern
-- Fetches kernel version from each image's compose URL
-- Selects the baseline image with the highest kernel version that is still older than the JIRA kernel
-- For RHEL-8 JIRAs: searches using RHEL-8 image patterns despite the command using a RHEL-9 inventory
-- Implements mirror fallback (original -> pnq mirror) for compose URL fetching
-- Caches results but auto-removes `NO_KERNEL` entries on next run
+- Look up `cephci.datasource_mapping` by `major.minor` then `major` (e.g. `9.4` → `datasource://rhel94`)
+- Require a matching ocpvirt inventory in `cephci.inventory_mapping` for non-RHEL-8
+- Omit unmapped versions so Phase 8 skips them
+- Persist to `data/baseline_images.json`
 
-**Input:** `image_info_map`, JIRA kernel versions
-**Output:** `rhosd_jira_baselines` dict keyed by JIRA ID (baseline image name, kernel version, is_rhel8, global_conf)
+**Input:** Commands + JIRA fix versions  
+**Output:** Per-JIRA baseline records (`baseline_image`, `baseline_kernel` = mapped key, `is_rhel8`, …)
 
 ### Phase 8: Command Execution
 
@@ -250,17 +245,17 @@ src/cephci/command_executor.py  — Subprocess execution, log capture, SCP, dash
 **Per-JIRA execution flow:**
 
 1. **Update baseline image:**
-   - Non-RHEL-8: updates `image-name` in the inventory YAML
-   - RHEL-8: updates `openstack` image-name in the global conf YAML (node4 + node5)
+   - Non-RHEL-8: updates `image-name` in the ocpvirt inventory YAML
+   - RHEL-8: updates `ocpvirt` / `openstack` image-name in the global conf YAML (client nodes)
 2. **Install CephCI dependencies:** `pip install -r requirements.txt` (once)
-3. **Populate OSP credentials:** writes OpenStack creds to `osp/osp-cred-ci-2.yaml`
-4. **Execute command:** `subprocess.run()` with 4-hour timeout
+3. **Populate OCPVirt credentials:** writes `globals.ocpvirt-credentials` to `ocpvirt/osp-cred-ocpvirt.yaml`
+4. **Execute command:** `subprocess.run()` with configured timeout (`--cloud ocpvirt`)
 5. **Capture output:** terminal log saved to `data/logs/kernel-logs/<JIRA-ID>_<type>/`
-6. **Run cleanup command** in CephCI repo
+6. **Run cleanup:** `--cloud ocpvirt --custom-config ocpvirt_namespace=…`
 7. **Transfer logs:** SCP to `magna002:/ceph/ceph-qe-logs/.../`
 8. **Publish dashboard:** updates `executions.json` and `index.html` on GitHub Pages
 
-**Skipped JIRAs:** If RHOS-D returns no baseline kernel, the JIRA is recorded with `status: skipped` and `reason: No RHOS-D kernel available`.
+**Skipped JIRAs:** No entry in `datasource_mapping` → `status: skipped`, reason `No OCPVirt datasource mapping for RHEL version`.
 
 ## RHEL-8 Special Handling
 
@@ -276,35 +271,33 @@ RHEL-8 JIRAs follow a different path through the pipeline:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Command Builder Overrides:                                          │
 │                                                                      │
+│  --cloud          → ocpvirt                                          │
 │  --platform       → rhel-9  (not rhel-8)                            │
 │  --rhbuild        → 7.1     (Ceph 7.1 for RHEL-8)                  │
-│  --inventory      → conf/inventory/rhel-9.4-server-x86_64.yaml     │
+│  --inventory      → conf/inventory/ocpvirt-rhel-9.4.yaml            │
 │  --global-conf    → kernel_verification_rhel8_client.yaml           │
 │  --suite          → kernel_pre/post_verification_rhel8_client.yaml  │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  RHOS-D Search:                                                      │
-│  Search for RHEL-8.x images (e.g., RHEL-8.8.0-x86_64-*)            │
-│  even though the command uses RHEL-9 inventory                      │
+│  Baseline mapping:                                                   │
+│  Requires an 8.x key in datasource_mapping (else skipped)           │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Phase 8 Execution:                                                  │
 │  Update global conf (not inventory)                                  │
-│  Set node4.image-name.openstack = <baseline RHEL-8 image>          │
-│  Set node5.image-name.openstack = <baseline RHEL-8 image>          │
+│  Set client node image-name.ocpvirt = <baseline datasource>         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key differences from standard flow:**
-- Platform is forced to `rhel-9` (RHEL-8 tests run on RHEL-9 nodes)
+- Platform is forced to `rhel-9` (RHEL-8 tests run on RHEL-9 guests)
 - Uses RHEL-8 specific suite and global conf files
-- RHOS-D searches for RHEL-8 images (not RHEL-9)
-- Baseline image is written to the global conf (not the inventory)
-- Ceph version is 7.1 (not 9.0)
+- Baseline is written to the global conf (not the inventory) when mapped
+- Ceph version is 7.1 (via rhbuild_mapping)
 
 ## Module Structure
 
@@ -316,15 +309,15 @@ src/
 │   ├── query.py                    # JQL query execution from jira_queries.yaml
 │   └── parser.py                   # ADF content parser, field extraction
 ├── cephci/
-│   ├── command_builder.py          # Builds CephCI run.py commands
+│   ├── command_builder.py          # Builds CephCI run.py --cloud ocpvirt commands
 │   ├── command_executor.py         # Executes commands, captures logs, SCP, dashboard
-│   ├── inventory_generator.py      # Generates missing inventory YAML files
+│   ├── inventory_generator.py      # Generates missing ocpvirt inventory YAML files
 │   ├── inventory_parser.py         # Parses inventory files for image metadata
-│   ├── repo_manager.py             # Git clone/pull, patch re-application
+│   ├── repo_manager.py             # Git clone/pull
 │   └── validator.py                # Validates CephCI file existence
-├── rhosd/
-│   ├── image_api.py                # RHOS-D Glance REST API, compose URL kernel fetch
-│   └── image_manager.py            # Image search and baseline matching
+├── ocpvirt/
+│   └── baseline.py                 # Static RHEL → datasource:// baseline mapper
+├── rhosd/                          # Legacy RHOS-D Glance client (unused after cutover)
 ├── dashboard/
 │   └── publisher.py                # GitHub Pages HTML generation and publishing
 └── utils/
@@ -353,15 +346,15 @@ src/
         │            │                 │
         ▼            ▼                 ▼
   ┌──────────┐  ┌─────────┐   ┌──────────────┐
-  │  GitHub  │  │ magna002│   │ rhosd_kernel_│
-  │  Pages   │  │  (logs) │   │ versions.json│
+  │  GitHub  │  │ magna002│   │ baseline_    │
+  │  Pages   │  │  (logs) │   │ images.json  │
   └──────────┘  └─────────┘   └──────────────┘
 ```
 
 **Runtime artifacts in `data/`:**
 - `jira_issues_table.txt` — formatted table of JIRA issues (Phase 1)
 - `command_executions.json` — execution records per JIRA (Phases 3-8)
-- `rhosd_kernel_versions.json` — per-JIRA baseline data (Phase 7)
+- `baseline_images.json` — per-JIRA OCPVirt datasource baselines (Phase 7)
 - `inventory_image_info.json` — parsed inventory metadata (Phase 6)
 - `logs/kernel-logs/<JIRA-ID>_<type>/` — terminal output per execution
 
@@ -408,7 +401,7 @@ All config files are baked into the container image at build time. The `.env` fi
           1. Copy SSH key to writable /root/.ssh_rw/id_rsa
           2. Copy .cephci.yaml from /tmp/ to /root/
           3. Clone CephCI repo (or fetch + pull if exists)
-          4. Apply runtime patches to cephci/compute/openstack.py
+          4. Optional OpenStack Glance patch (APPLY_OPENSTACK_PATCH=1 only)
           5. Create data directories
           6. Execute: python3 -m src.main --yes
 ```

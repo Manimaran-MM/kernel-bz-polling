@@ -35,14 +35,22 @@ class CephCICommandBuilder:
             '7': '5.3'
         })
         
-        # RHEL version to inventory mapping
+        # RHEL version → ocpvirt inventory (only mapped versions are runnable)
         self.inventory_mapping = self.config.get('cephci.inventory_mapping', {
-            '10': 'conf/inventory/rhel-10.0-server-x86_64.yaml',
-            '9': 'conf/inventory/rhel-9.4-server-x86_64.yaml',
-            '8': 'conf/inventory/rhel-8.10-server-x86_64.yaml',
-            '7': 'conf/inventory/rhel-7.9-server-x86_64.yaml'
+            '9.4': 'conf/inventory/ocpvirt-rhel-9.4.yaml',
+            '9.6': 'conf/inventory/ocpvirt-rhel-9.6.yaml',
+            '10': 'conf/inventory/ocpvirt-rhel-10-latest.yaml',
+            '10.0': 'conf/inventory/ocpvirt-rhel-10-latest.yaml',
         })
-        
+
+        self.ocpvirt_namespace = self.config.get(
+            'ocpvirt.namespace', 'rdu3_ceph_sys_test'
+        )
+        self.ocpvirt_profile = self.config.get('ocpvirt.profile', 'o1.large')
+        self.ocpvirt_profile_post = self.config.get(
+            'ocpvirt.profile_post', 'o1.xlarge'
+        )
+
         # Kernel verification parameters
         self.instance_name_prefix = self.config.get(
             'cephci.instance_name_prefix', 'auto-kernel-jira-'
@@ -55,7 +63,7 @@ class CephCICommandBuilder:
             'suite_post': 'suites/tentacle/cephfs/kernel-validation/kernel_post_verification.yaml',
             'suite_pre_rhel8': 'suites/tentacle/cephfs/kernel-validation/kernel_pre_verification_rhel8_client.yaml',
             'suite_post_rhel8': 'suites/tentacle/cephfs/kernel-validation/kernel_post_verification_rhel8_client.yaml',
-            'osp_cred': 'osp/osp-cred-ci-2.yaml',
+            'osp_cred': 'ocpvirt/osp-cred-ocpvirt.yaml',
             'build': 'stable',
         })
         
@@ -166,28 +174,28 @@ class CephCICommandBuilder:
         
         # Required parameters
         params['--log-level'] = 'DEBUG'
-        params['--cloud'] = 'openstack'
-        
+        params['--cloud'] = 'ocpvirt'
+
         # Detect RHEL-8 for special handling
         rhel_major = self._get_rhel_major(fix_versions)
         is_rhel8 = rhel_major == '8'
-        
+
         # Determine rhbuild based on fix versions
         rhbuild = self._get_rhbuild(fix_versions)
         if rhbuild:
             params['--rhbuild'] = rhbuild
             self.logger.info(f"Using rhbuild: {rhbuild} for fix versions: {fix_versions}")
-        
+
         # Determine platform — RHEL-8 runs on RHEL-9 VMs
         if is_rhel8:
             params['--platform'] = 'rhel-9'
-            self.logger.info(f"RHEL-8 JIRA: overriding platform to rhel-9")
+            self.logger.info("RHEL-8 JIRA: overriding platform to rhel-9")
         else:
             platform = self._get_platform(fix_versions)
             if platform:
                 params['--platform'] = platform
                 self.logger.info(f"Using platform: {platform} for fix versions: {fix_versions}")
-        
+
         # Kernel verification parameters — RHEL-8 uses separate conf/suite files
         if is_rhel8:
             params['--global-conf'] = self.kernel_verification.get('global_conf_rhel8')
@@ -195,7 +203,7 @@ class CephCICommandBuilder:
                 params['--suite'] = self.kernel_verification.get('suite_post_rhel8')
             else:
                 params['--suite'] = self.kernel_verification.get('suite_pre_rhel8')
-            self.logger.info(f"RHEL-8 JIRA: using rhel8 global-conf and suite")
+            self.logger.info("RHEL-8 JIRA: using rhel8 global-conf and suite")
         else:
             params['--global-conf'] = self.kernel_verification.get('global_conf')
             if verification_type == 'post':
@@ -203,18 +211,40 @@ class CephCICommandBuilder:
             else:
                 params['--suite'] = self.kernel_verification.get('suite_pre')
         params['--osp-cred'] = self.kernel_verification.get('osp_cred')
-        
-        # Determine inventory — RHEL-8 uses RHEL-9 inventory (VMs are RHEL-9)
+
+        # Determine inventory — RHEL-8 uses RHEL-9.4 ocpvirt inventory when mapped
         if is_rhel8:
-            inventory = self.inventory_mapping.get('9', 'conf/inventory/rhel-9.4-server-x86_64.yaml')
-            params['--inventory'] = inventory
-            self.logger.info(f"RHEL-8 JIRA: using RHEL-9 inventory {inventory}")
+            inventory = (
+                self.inventory_mapping.get('9.4')
+                or self.inventory_mapping.get('9.6')
+            )
+            if inventory:
+                params['--inventory'] = inventory
+                self.logger.info(f"RHEL-8 JIRA: using RHEL-9 ocpvirt inventory {inventory}")
+            else:
+                self.logger.warning(
+                    "RHEL-8 JIRA: no ocpvirt RHEL-9 inventory mapping available"
+                )
         else:
             inventory = self._get_inventory(fix_versions)
             if inventory:
                 params['--inventory'] = inventory
-                self.logger.info(f"Using inventory: {inventory} for fix versions: {fix_versions}")
-        
+                self.logger.info(
+                    f"Using inventory: {inventory} for fix versions: {fix_versions}"
+                )
+
+        # OCP Virt namespace + instance type (replaces OpenStack vm-size)
+        params['--custom-config ocpvirt_namespace'] = self.ocpvirt_namespace
+        profile = (
+            self.ocpvirt_profile_post
+            if verification_type == 'post'
+            else self.ocpvirt_profile
+        )
+        params['--custom-config ocpvirt_profile'] = profile
+        self.logger.info(
+            f"OCPVirt namespace={self.ocpvirt_namespace} profile={profile}"
+        )
+
         # Custom config: pre or post depending on verification type
         verification_type = jira_data.get('verification_type', 'pre')
         fixed_in_build = jira_data.get('fixed_in_build', '')
@@ -225,26 +255,28 @@ class CephCICommandBuilder:
                 params['--custom-config post'] = brew_url
                 self.logger.info(f"Using post verification with brew URL: {brew_url}")
             else:
-                self.logger.warning(f"Failed to build brew URL from '{fixed_in_build}' for {jira_id}")
+                self.logger.warning(
+                    f"Failed to build brew URL from '{fixed_in_build}' for {jira_id}"
+                )
         elif repo_url:
             params['--custom-config pre'] = repo_url
             self.logger.info(f"Using pre verification with Repo URL: {repo_url}")
         else:
             self.logger.warning(f"No Repo URL or Fixed in Build found for {jira_id}")
-        
+
         # Build parameter — RHEL 9.2 uses z0; everything else uses stable (or config default)
         build = self._get_build(fix_versions)
         params['--build'] = build
         self.logger.info(f"Using build: {build} for fix versions: {fix_versions}")
-        
+
         # Flags without values
         params['--skip-sos-report'] = ''
         params['--store'] = ''
-        
+
         # Add any additional parameters
         if additional_params:
             params.update(additional_params)
-        
+
         return params
     
     def _get_build(self, fix_versions: List[str]) -> str:
@@ -317,46 +349,35 @@ class CephCICommandBuilder:
     
     def _get_inventory(self, fix_versions: List[str]) -> Optional[str]:
         """
-        Determine inventory file based on fix versions.
-        Extracts full minor version (e.g., 9.2, 8.8) and maps to exact inventory file.
-        
-        Args:
-            fix_versions: List of fix version strings (e.g., ['rhel-9.2.0.z', 'rhel-8.8.0.z'])
-            
-        Returns:
-            inventory file path or None
+        Resolve ocpvirt inventory from fix versions via inventory_mapping only.
+
+        Looks up major.minor first (e.g. 9.4), then major (e.g. 10).
+        Returns None when unmapped — Phase 7 will skip those JIRAs.
         """
         if not fix_versions:
             self.logger.warning("No fix versions provided, cannot determine inventory")
             return None
-        
-        # Extract full minor version from first fix version
+
         for version in fix_versions:
-            # Remove 'rhel-' prefix if present (e.g., 'rhel-10.1.z' -> '10.1.z')
             clean_version = version.replace('rhel-', '').replace('RHEL-', '')
-            
-            # Extract major.minor version (e.g., '9.2' from '9.2.0.z' or '10.1' from '10.1.z')
             version_parts = clean_version.split('.')
+            lookup_keys = []
             if len(version_parts) >= 2:
-                # Full minor version (e.g., '9.2', '8.8', '10.1')
-                minor_version = f"{version_parts[0]}.{version_parts[1]}"
-                
-                # Build inventory file path
-                inventory = f"conf/inventory/rhel-{minor_version}-server-x86_64.yaml"
-                self.logger.debug(f"Mapped version {version} to inventory {inventory}")
-                return inventory
-            elif len(version_parts) == 1:
-                # Only major version, use default mapping
-                major_version = version_parts[0]
-                if major_version in self.inventory_mapping:
-                    inventory = self.inventory_mapping[major_version]
-                    self.logger.debug(f"Mapped version {version} (major: {major_version}) to inventory {inventory}")
+                lookup_keys.append(f"{version_parts[0]}.{version_parts[1]}")
+            lookup_keys.append(version_parts[0])
+
+            for key in lookup_keys:
+                if key in self.inventory_mapping:
+                    inventory = self.inventory_mapping[key]
+                    self.logger.debug(
+                        f"Mapped version {version} (key: {key}) to inventory {inventory}"
+                    )
                     return inventory
-        
-        # Default to RHEL 9 inventory if no mapping found
-        default_inventory = 'conf/inventory/rhel-9.4-server-x86_64.yaml'
-        self.logger.warning(f"No inventory mapping found for versions {fix_versions}, defaulting to {default_inventory}")
-        return default_inventory
+
+        self.logger.warning(
+            f"No ocpvirt inventory mapping for versions {fix_versions}"
+        )
+        return None
     
     def _get_platform(self, fix_versions: List[str]) -> Optional[str]:
         """

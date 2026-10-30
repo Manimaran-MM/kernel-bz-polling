@@ -1,4 +1,9 @@
-"""Apply patches to the cloned cephci repository."""
+"""Apply patches to the cloned cephci repository.
+
+OpenStack Glance multi-match patch is skipped for the ocpvirt cutover
+(default cloud). Set APPLY_OPENSTACK_PATCH=1 to re-enable if needed.
+"""
+import os
 import sys
 from pathlib import Path
 
@@ -54,4 +59,7 @@ def patch_get_image(cephci_dir: str) -> bool:
 if __name__ == "__main__":
     cephci_dir = sys.argv[1] if len(sys.argv) > 1 else "./cephci"
     print("Applying patches to CephCI...")
-    patch_get_image(cephci_dir)
+    if os.environ.get("APPLY_OPENSTACK_PATCH", "").lower() in ("1", "true", "yes"):
+        patch_get_image(cephci_dir)
+    else:
+        print("  ⏭️  Skipping OpenStack Glance patch (ocpvirt cloud; set APPLY_OPENSTACK_PATCH=1 to enable)")

@@ -28,11 +28,23 @@ cephci:
     "9": "9.1"    # RHEL 9.x -> rhbuild 9.1
     "8": "7.1"    # RHEL 8.x -> rhbuild 7.1
     "7": "5.3"    # RHEL 7.x -> rhbuild 5.3
+  # Only versions with matching conf/inventory/ocpvirt-rhel-*.yaml in cephci
   inventory_mapping:
-    "10": "conf/inventory/rhel-10.0-server-x86_64.yaml"
-    "9": "conf/inventory/rhel-9.4-server-x86_64.yaml"
-    "8": "conf/inventory/rhel-8.10-server-x86_64.yaml"
-    "7": "conf/inventory/rhel-7.9-server-x86_64.yaml"
+    "9.4": "conf/inventory/ocpvirt-rhel-9.4.yaml"
+    "9.6": "conf/inventory/ocpvirt-rhel-9.6.yaml"
+    "10": "conf/inventory/ocpvirt-rhel-10-latest.yaml"
+    "10.0": "conf/inventory/ocpvirt-rhel-10-latest.yaml"
+  # Baseline datasource aliases (short names resolve via conf/ocpvirt/<namespace>.yaml;
+  # if the CDI DataSource is missing, http_image_fallback uses the GitLab guest URL).
+  # RHEL-8: no ocpvirt-rhel-8 inventory — command_builder uses RHEL-9 inventory +
+  # *_rhel8_client global-conf/suite; Phase 8 writes this baseline into global-conf.
+  datasource_mapping:
+    "8": "datasource://rhel810"
+    "8.10": "datasource://rhel810"
+    "9.4": "datasource://rhel94"
+    "9.6": "datasource://rhel96"
+    "10": "datasource://rhel10"
+    "10.0": "datasource://rhel10"
   kernel_verification:
     global_conf: "conf/tentacle/cephfs/kernel-validation/kernel_verification.yaml"
     global_conf_rhel8: "conf/tentacle/cephfs/kernel-validation/kernel_verification_rhel8_client.yaml"
@@ -40,20 +52,33 @@ cephci:
     suite_post: "suites/tentacle/cephfs/kernel-validation/kernel_post_verification.yaml"
     suite_pre_rhel8: "suites/tentacle/cephfs/kernel-validation/kernel_pre_verification_rhel8_client.yaml"
     suite_post_rhel8: "suites/tentacle/cephfs/kernel-validation/kernel_post_verification_rhel8_client.yaml"
-    osp_cred: "osp/osp-cred-ci-2.yaml"
+    osp_cred: "ocpvirt/osp-cred-ocpvirt.yaml"
     build: "stable"          # default --build
     build_mapping:           # RHEL major or major.minor overrides for --build
       "9.2": "z0"            # RHEL 9.2 -> z0
       "8": "z9"              # all RHEL 8.x -> z9 (rhbuild 7.1 via rhbuild_mapping)
 
-openstack:
-  auth_url: "${OPENSTACK_AUTH_URL}"
-  username: "${OPENSTACK_USERNAME}"
-  password: "${OPENSTACK_PASSWORD}"
-  project_name: "${OPENSTACK_PROJECT_NAME}"
-  domain: "${OPENSTACK_DOMAIN}"
-  region: "${OPENSTACK_REGION}"
-  auth_version: "3.x_appcred"
+ocpvirt:
+  namespace: "rdu3_ceph_sys_test"   # conf/ocpvirt/<name>.yaml → ceph-sys-test--runtime-int
+  profile: "o1.large"              # default VirtualMachineClusterInstancetype
+  profile_post: "o1.xlarge"        # sizing for post verification (replaces ci.standard.large)
+  token: "${OCPVIRT_TOKEN}"
+  certificate_authority_data: "${OCPVIRT_CERTIFICATE_AUTHORITY_DATA}"
+  # ssl_ca_cert: "${OCPVIRT_SSL_CA_CERT}"
+  # private_key_path: "${OCPVIRT_PRIVATE_KEY_PATH}"
+  # Image source: prefer datasource://; fall back to GitLab guest HTTPS URL when
+  # the CDI DataSource is missing on the cluster (cephci accepts https:// image-name).
+  http_image_fallback: true
+  check_datasource_exists: true    # probe cluster DataSource before falling back
+  prefer_http_guest_image: false   # true = always use validated guest HTTPS URL
+
+# GitLab cephci-openshift — DataVolume YAMLs with guest-image compose URLs
+gitlab:
+  url: "${GITLAB_URL}"
+  token: "${GITLAB_TOKEN}"
+  project: "${GITLAB_PROJECT}"
+  branch: "${GITLAB_BRANCH}"
+  dv_path: "${GITLAB_DV_PATH}"
 
 logging:
   level: "${LOG_LEVEL}"
