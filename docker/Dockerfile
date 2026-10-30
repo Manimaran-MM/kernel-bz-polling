@@ -1,18 +1,14 @@
-FROM python:3.11-slim
+# Red Hat UBI base — reachable when Docker Hub is blocked
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+USER root
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    openssh-client \
-    curl \
-    ca-certificates \
-    rsync \
-    build-essential \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Base image already includes git, openssh-clients, curl-minimal,
+# ca-certificates, rsync, gcc, and make.
 
 WORKDIR /app
 

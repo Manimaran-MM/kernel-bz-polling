@@ -24,3 +24,13 @@ excluded_jiras:
    reason: "Not required to test as it will be cleaned up as no further release planned for 9.7"
  - id: RHEL-143900
    reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"
+#  - id: RHEL-143902
+#    reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"
+#  - id: RHEL-143884
+#    reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"
+#  - id: RHEL-237888
+#    reason: "Not required to test as it will be cleaned up as no further release planned for 8.6"
+#  - id: RHEL-237479
+#    reason: "Not required to test as it will be cleaned up as no further release planned for 8.6"
+#  - id: RHEL-142103
+#    reason: "Not required to test as it will be cleaned up as no further release planned for 10.1"

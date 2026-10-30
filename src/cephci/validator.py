@@ -147,8 +147,21 @@ class CephCIValidator:
         if results['all_valid']:
             self.logger.info(f"✓ All files valid for {jira_id}")
         else:
-            self.logger.warning(f"✗ Some files missing for {jira_id}")
-        
+            missing = []
+            for key, label in (
+                ('inventory', 'inventory'),
+                ('global_conf', 'global-conf'),
+                ('suite', 'suite'),
+                ('osp_cred', 'osp-cred'),
+            ):
+                if not results.get(f'{key}_valid', False):
+                    missing.append(
+                        f"{label}: {results.get(f'{key}_message', 'missing')}"
+                    )
+            self.logger.warning(
+                f"✗ Some files missing for {jira_id}: {'; '.join(missing)}"
+            )
+
         return results
     
     def _validate_file(

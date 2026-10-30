@@ -31,15 +31,31 @@ SSHEOF
 fi
 
 # ── .cephci.yaml setup ──
-# Mount to /tmp/.cephci.yaml.in (read-only) and copy to the expected location
+# Mount to /tmp/.cephci.yaml.in (read-only) and copy where CephCI looks.
+# UBI python images set HOME=/opt/app-root/src even as root; CephCI resolves
+# ~/.cephci.yaml via expanduser("~"), so install under $HOME (not only /root).
+CEPHCI_CFG="${HOME:-/root}/.cephci.yaml"
+install_cephci_cfg() {
+    local src="$1"
+    mkdir -p "$(dirname "$CEPHCI_CFG")"
+    cp "$src" "$CEPHCI_CFG"
+    chmod 644 "$CEPHCI_CFG"
+    if [ "$CEPHCI_CFG" != "/root/.cephci.yaml" ]; then
+        cp "$src" /root/.cephci.yaml
+        chmod 644 /root/.cephci.yaml
+    fi
+}
+
 if [ -f /tmp/.cephci.yaml.in ]; then
-    cp /tmp/.cephci.yaml.in /root/.cephci.yaml
-    chmod 644 /root/.cephci.yaml
-    echo ".cephci.yaml installed from mount"
+    install_cephci_cfg /tmp/.cephci.yaml.in
+    echo ".cephci.yaml installed from mount -> $CEPHCI_CFG"
+elif [ -f "$CEPHCI_CFG" ]; then
+    echo ".cephci.yaml already present at $CEPHCI_CFG"
 elif [ -f /root/.cephci.yaml ]; then
-    echo ".cephci.yaml already present"
+    install_cephci_cfg /root/.cephci.yaml
+    echo ".cephci.yaml copied from /root -> $CEPHCI_CFG"
 else
-    echo "WARNING: No .cephci.yaml found"
+    echo "WARNING: No .cephci.yaml found (expected at $CEPHCI_CFG)"
 fi
 
 # ── CephCI repository ──
@@ -64,7 +80,7 @@ if [ -n "$CEPHCI_REPO_URL" ]; then
         cd /app
     fi
 
-    # Apply patches to cephci
+    # Apply patches to cephci (OpenStack Glance patch skipped unless APPLY_OPENSTACK_PATCH=1)
     python3 /app/docker/patches/apply_patches.py "$CEPHCI_DIR"
 fi
 

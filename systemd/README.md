@@ -15,7 +15,7 @@ Before enabling the timer, ensure the following are in place on the VM:
 
 ```
 ~/kernel-bz-polling/
-├── .env                    # Credentials: JIRA token, OpenStack, GitHub token, SSH, etc.
+├── .env                    # Credentials: JIRA token, OCPVirt token/CA, GitHub token, SSH, etc.
 ```
 
 > **Note:** The `config/` folder is baked into the container image at build time.
@@ -40,7 +40,7 @@ podman images | grep kernel-bz-polling
 
 The container needs outbound access to:
 - `redhat.atlassian.net` (JIRA API)
-- `rhos-d.infra.prod.upshift.rdu2.redhat.com` (OpenStack Glance API)
+- OCP API server from `conf/ocpvirt/rdu3_ceph_sys_test.yaml` (e.g. `https://10.5.229.33:6443`)
 - `api.github.com` (dashboard publishing)
 - `magna002.ceph.redhat.com` (SCP log transfer)
 - `github.com` (CephCI repo clone)
@@ -102,7 +102,7 @@ kernel-bz-polling/
 └── runs/
     ├── 2026-06-05/
     │   ├── command_executions.json
-    │   ├── rhosd_kernel_versions.json
+    │   ├── baseline_images.json
     │   ├── logs/
     │   └── ...
     ├── 2026-06-07/

@@ -6,6 +6,7 @@ Executes CephCI commands in the cloned repository
 import subprocess
 import os
 import json
+import shutil
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -94,35 +95,54 @@ class CephCIExecutor:
             return False
 
     def populate_osp_credentials(self) -> bool:
-        """Populate the osp-cred YAML file with OpenStack credentials from .env.
+        """Populate the osp-cred YAML with OCP Virt credentials from .env.
 
-        Reads OPENSTACK_* environment variables (loaded via dotenv) and writes
-        them into the cephci osp credentials file so that run.py can authenticate.
+        Writes globals.ocpvirt-credentials (token + optional CA / SSH key)
+        for --cloud ocpvirt. API server and namespace come from
+        conf/ocpvirt/<name>.yaml via --custom-config ocpvirt_namespace.
 
         Returns True on success, False on failure.
         """
         osp_cred_rel = self.config.get(
-            "cephci.kernel_verification.osp_cred", "osp/osp-cred-ci-2.yaml"
+            "cephci.kernel_verification.osp_cred", "ocpvirt/osp-cred-ocpvirt.yaml"
         )
         osp_cred_path = self.cephci_repo_path / osp_cred_rel
 
-        username = os.environ.get("OPENSTACK_USERNAME")
-        password = os.environ.get("OPENSTACK_PASSWORD")
-        auth_url = os.environ.get("OPENSTACK_AUTH_URL")
-        project_name = os.environ.get("OPENSTACK_PROJECT_NAME")
-        region = os.environ.get("OPENSTACK_REGION", "regionOne")
-        domain = os.environ.get("OPENSTACK_DOMAIN", "redhat.com")
-        tenant_domain_id = os.environ.get("OPENSTACK_TENANT_DOMAIN_ID")
+        token = os.environ.get("OCPVIRT_TOKEN") or self.config.get("ocpvirt.token")
+        ca_data = (
+            os.environ.get("OCPVIRT_CERTIFICATE_AUTHORITY_DATA")
+            or self.config.get("ocpvirt.certificate_authority_data")
+            or ""
+        )
+        ssl_ca_cert = (
+            os.environ.get("OCPVIRT_SSL_CA_CERT")
+            or self.config.get("ocpvirt.ssl_ca_cert")
+            or ""
+        )
+        private_key_path = (
+            os.environ.get("OCPVIRT_PRIVATE_KEY_PATH")
+            or self.config.get("ocpvirt.private_key_path")
+            or ""
+        )
 
-        if not all([username, password, auth_url, project_name]):
+        if not token:
             self.logger.error(
-                "❌ Missing required OPENSTACK_* env vars "
-                "(OPENSTACK_USERNAME, OPENSTACK_PASSWORD, OPENSTACK_AUTH_URL, OPENSTACK_PROJECT_NAME)"
+                "❌ Missing required OCPVIRT_TOKEN env var "
+                "(ServiceAccount bearer token for ocpvirt)"
             )
             return False
 
-        # Build the credentials structure preserving the existing file layout
         try:
+            osp_cred_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Seed from cephci example when the target file is absent
+            example_path = osp_cred_path.parent / "osp-cred-ocpvirt-example.yaml"
+            if not osp_cred_path.exists() and example_path.exists():
+                shutil.copy(example_path, osp_cred_path)
+                self.logger.info(
+                    f"📄 Seeded {osp_cred_path.name} from {example_path.name}"
+                )
+
             cred_data = {}
             if osp_cred_path.exists():
                 with open(osp_cred_path) as f:
@@ -131,26 +151,26 @@ class CephCIExecutor:
             if "globals" not in cred_data:
                 cred_data["globals"] = {}
 
-            cred_data["globals"]["openstack-credentials"] = {
-                "username": username,
-                "password": password,
-                "auth-url": auth_url,
-                "auth-version": "3.x_appcred",
-                "tenant-name": project_name,
-                "service-region": region,
-                "domain": domain,
-                "tenant-domain-id": tenant_domain_id,
-            }
+            ocp_creds = {"token": token}
+            if ca_data:
+                ocp_creds["certificate_authority_data"] = ca_data
+            if ssl_ca_cert:
+                ocp_creds["ssl_ca_cert"] = ssl_ca_cert
+            if private_key_path:
+                ocp_creds["private_key_path"] = private_key_path
 
-            osp_cred_path.parent.mkdir(parents=True, exist_ok=True)
+            cred_data["globals"]["ocpvirt-credentials"] = ocp_creds
+            # Drop legacy OpenStack block if present
+            cred_data["globals"].pop("openstack-credentials", None)
+
             with open(osp_cred_path, "w") as f:
                 yaml.dump(cred_data, f, default_flow_style=False, sort_keys=False)
 
-            self.logger.info(f"✅ OSP credentials written to {osp_cred_path}")
+            self.logger.info(f"✅ OCPVirt credentials written to {osp_cred_path}")
             return True
 
         except Exception as e:
-            self.logger.error(f"❌ Failed to write OSP credentials: {e}")
+            self.logger.error(f"❌ Failed to write OCPVirt credentials: {e}")
             return False
 
     def verify_and_fix_inventory_images(self, commands: List[Dict]) -> None:
@@ -360,19 +380,22 @@ class CephCIExecutor:
         if "--osp-cred " in command:
             return command.split("--osp-cred ")[1].split(" ")[0]
         return self.config.get(
-            "cephci.kernel_verification.osp_cred", "osp/osp-cred-ci-2.yaml"
+            "cephci.kernel_verification.osp_cred", "ocpvirt/osp-cred-ocpvirt.yaml"
         )
 
     def cleanup_instance(self, instance_name: str, osp_cred: str) -> bool:
-        """Run the cephci cleanup command for an instance.
+        """Run the cephci cleanup command for an ocpvirt instance.
 
         Always called after execution regardless of pass/fail.
 
         Returns True on success, False on failure.
         """
+        namespace = self.config.get("ocpvirt.namespace", "rdu3_ceph_sys_test")
         cleanup_cmd = (
-            f"python3 run.py --cloud openstack --log-level DEBUG "
-            f"--osp-cred {osp_cred} --cleanup {instance_name}"
+            f"python3 run.py --cloud ocpvirt --log-level DEBUG "
+            f"--osp-cred {osp_cred} "
+            f"--custom-config ocpvirt_namespace={namespace} "
+            f"--cleanup {instance_name}"
         )
         self.logger.info(f"🧹 Running cleanup for {instance_name}")
         self.logger.info(f"📝 Cleanup command: {cleanup_cmd}")
@@ -406,6 +429,7 @@ class CephCIExecutor:
         self,
         jira_id: str,
         command: str,
+        baseline_image: Optional[str] = None,
         rhosd_kernel: Optional[str] = None,
         dry_run: bool = False,
         verification_type: Optional[str] = None,
@@ -414,25 +438,29 @@ class CephCIExecutor:
     ) -> Tuple[bool, str, str]:
         """
         Execute a CephCI command, then run cleanup regardless of outcome.
-        
+
         Args:
             jira_id: JIRA issue ID
             command: Full CephCI command to execute
-            rhosd_kernel: RHOS-D kernel version (optional, for logging)
+            baseline_image: OCPVirt datasource baseline (optional, for logging)
+            rhosd_kernel: Deprecated alias for baseline_image
             dry_run: If True, only log the command without executing
             verification_type: 'pre', 'post', or 'N/A'
             jira_kernel: Kernel version from the JIRA repo
             fix_version: JIRA fix version string (e.g., 'rhel-8.8.0.z')
-            
+
         Returns:
             Tuple of (success, stdout, stderr)
         """
+        if baseline_image is None:
+            baseline_image = rhosd_kernel
+
         self.logger.info(f"\n{'='*80}")
         self.logger.info(f"🚀 Executing command for {jira_id}")
         self.logger.info(f"{'='*80}")
-        
-        if rhosd_kernel:
-            self.logger.info(f"📦 RHOS-D Kernel: {rhosd_kernel}")
+
+        if baseline_image:
+            self.logger.info(f"📦 Baseline datasource: {baseline_image}")
         
         # Check if cephci repo exists
         if not self.cephci_repo_path.exists():
@@ -477,7 +505,8 @@ class CephCIExecutor:
         execution_record = {
             'jira_id': jira_id,
             'command': command,
-            'rhosd_kernel': rhosd_kernel,
+            'baseline_image': baseline_image,
+            'rhosd_kernel': baseline_image,  # backward-compat for dashboard
             'jira_kernel': jira_kernel,
             'fix_version': fix_version,
             'inventory': inventory,
