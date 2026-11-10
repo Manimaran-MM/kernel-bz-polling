@@ -5,7 +5,7 @@ echo "=========================================="
 echo "Kernel BZ Polling System - Starting"
 echo "=========================================="
 
-# ── SSH setup ──
+# ── SSH setup (optional guest access; log upload uses rclone → COS) ──
 # The key is mounted read-only, so copy it to a writable location and fix perms
 if [ -f /root/.ssh/id_rsa ]; then
     cp /root/.ssh/id_rsa /tmp/ssh_key
@@ -20,13 +20,6 @@ StrictHostKeyChecking no
 SSHEOF
     chmod 644 /root/.ssh/config 2>/dev/null || true
 
-    if [ -n "$LOG_STORAGE_HOST" ]; then
-        echo "Adding $LOG_STORAGE_HOST to known_hosts..."
-        ssh-keyscan -H "$LOG_STORAGE_HOST" >> /root/.ssh_rw/known_hosts 2>/dev/null || true
-        export SSH_KNOWN_HOSTS=/root/.ssh_rw/known_hosts
-    fi
-
-    export SSH_KEY_PATH=/root/.ssh_rw/id_rsa
     echo "SSH key configured at /root/.ssh_rw/id_rsa"
 fi
 
@@ -96,7 +89,8 @@ echo "  JIRA Server  : ${JIRA_SERVER:-Not set}"
 echo "  CephCI Repo  : ${CEPHCI_REPO_URL:-Not set}"
 echo "  CephCI Branch: ${CEPHCI_BRANCH:-Not set}"
 echo "  CephCI Path  : ${CEPHCI_LOCAL_PATH:-./cephci}"
-echo "  Log Storage  : ${LOG_STORAGE_HOST:-Not set}:${LOG_STORAGE_PATH:-Not set}"
+echo "  Log Storage  : ${COS_REMOTE:-ceph-qe-cos}:${COS_BUCKET:-Not set}/${COS_PATH_PREFIX:-}"
+echo "  Log Public   : ${LOG_PUBLIC_BASE_URL:-http://9.11.121.102/logs}"
 echo "  Log Level    : ${LOG_LEVEL:-INFO}"
 echo "=========================================="
 

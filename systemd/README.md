@@ -24,7 +24,7 @@ Before enabling the timer, ensure the following are in place on the VM:
 ### Required files under home directory
 
 ```
-~/.ssh/id_rsa               # SSH private key (for SCP log transfer to magna002)
+~/.ssh/id_rsa               # Optional SSH private key (guest access)
 ~/.cephci.yaml              # CephCI subscription manager config (used by cephci run.py)
 ```
 
@@ -42,7 +42,7 @@ The container needs outbound access to:
 - `redhat.atlassian.net` (JIRA API)
 - OCP API server from `conf/ocpvirt/rdu3_ceph_sys_test.yaml` (e.g. `https://10.5.229.33:6443`)
 - `api.github.com` (dashboard publishing)
-- `magna002.ceph.redhat.com` (SCP log transfer)
+- `s3.au-syd.cloud-object-storage.appdomain.cloud` (IBM COS log upload via rclone)
 - `github.com` (CephCI repo clone)
 
 ## One-Time Setup on the VM

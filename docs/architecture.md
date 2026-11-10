@@ -32,8 +32,8 @@ The Kernel BZ Polling System is a containerized Python application that automate
                          └─────────────┘ └───┬────┘ └──────────┘ └───────────┘
                                              │
                                       ┌──────▼──────┐
-                                      │   magna002   │
-                                      │ (SCP logs)   │
+                                      │  IBM COS    │
+                                      │ (rclone)    │
                                       └──────────────┘
 ```
 
@@ -125,7 +125,7 @@ The Kernel BZ Polling System is a containerized Python application that automate
 │  │ 4. Execute: subprocess.run() with configured timeout         │   │
 │  │ 5. Save terminal log to data/logs/kernel-logs/<ID>_<type>/   │   │
 │  │ 6. Cleanup: --cloud ocpvirt + ocpvirt_namespace              │   │
-│  │ 7. SCP logs to magna002                                      │   │
+│  │ 7. rclone logs to IBM COS                                    │   │
 │  │ 8. Publish results to GitHub Pages dashboard                 │   │
 │  └───────────────────────────────────────────────────────────────┘   │
 │                                                                      │
@@ -262,7 +262,7 @@ Shared names (`rhel94-iso`, `rhel810-iso`, …) are never applied or replaced. O
 Executes CephCI commands one by one, with pre-execution setup and post-execution cleanup.
 
 ```
-src/cephci/command_executor.py  — Subprocess execution, log capture, SCP, dashboard publish
+src/cephci/command_executor.py  — Subprocess execution, log capture, rclone COS upload, dashboard publish
 ```
 
 **Per-JIRA execution flow:**
@@ -276,7 +276,7 @@ src/cephci/command_executor.py  — Subprocess execution, log capture, SCP, dash
 4. **Execute command:** `subprocess.run()` with configured timeout (`--cloud ocpvirt`)
 5. **Capture output:** terminal log saved to `data/logs/kernel-logs/<JIRA-ID>_<type>/`
 6. **Run cleanup:** `--cloud ocpvirt --custom-config ocpvirt_namespace=…`
-7. **Transfer logs:** SCP to `magna002:/ceph/ceph-qe-logs/.../`
+7. **Transfer logs:** rclone to `ceph-qe-cos:ceph-qe-logs/manual/manim/kernel-logs-ocp/<JIRA>_<type>_<YYYYMMDD-HHMMSS>/` (dashboard links via `http://9.11.121.102/logs/...`)
 8. **Publish dashboard:** updates `executions.json` and `index.html` on GitHub Pages
 
 **Skipped JIRAs:** No entry in `datasource_mapping` → `status: skipped`, reason `No OCPVirt datasource mapping for RHEL version`.
@@ -334,7 +334,7 @@ src/
 │   └── parser.py                   # ADF content parser, field extraction
 ├── cephci/
 │   ├── command_builder.py          # Builds CephCI run.py --cloud ocpvirt commands
-│   ├── command_executor.py         # Executes commands, captures logs, SCP, dashboard
+│   ├── command_executor.py         # Executes commands, captures logs, rclone COS, dashboard
 │   ├── inventory_generator.py      # Generates missing ocpvirt inventory YAML files
 │   ├── inventory_parser.py         # Parses inventory files for image metadata
 │   ├── repo_manager.py             # Git clone/pull
@@ -370,7 +370,7 @@ src/
         │            │                 │
         ▼            ▼                 ▼
   ┌──────────┐  ┌─────────┐   ┌──────────────┐
-  │  GitHub  │  │ magna002│   │ baseline_    │
+  │  GitHub  │  │ IBM COS │   │ baseline_    │
   │  Pages   │  │  (logs) │   │ images.json  │
   └──────────┘  └─────────┘   └──────────────┘
 ```
@@ -403,7 +403,7 @@ All config files are baked into the container image at build time. The `.env` fi
 │  Container Image (kernel-bz-polling:amd64)                          │
 │                                                                      │
 │  Base: Python 3.11 slim                                             │
-│  Packages: git, openssh-client, curl, rsync, build-essential        │
+│  Packages: git, openssh-client, curl, rsync, rclone, oc             │
 │                                                                      │
 │  /app/                                                               │
 │  ├── src/                    # Application source code               │

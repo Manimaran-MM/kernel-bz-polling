@@ -11,13 +11,20 @@ ENV PYTHONUNBUFFERED=1 \
 # ca-certificates, rsync, gcc, and make.
 # OpenShift CLI (oc) + gettext (envsubst) required by create-rhel-guest-image.sh
 # when provisioning *-custom DataVolumes for unmet baselines.
+# rclone uploads logs to IBM COS (replaces magna SCP).
 ARG OC_VERSION=4.16.30
-RUN dnf install -y gettext \
+RUN dnf install -y gettext unzip \
     && curl -fsSL -o /tmp/openshift-client-linux.tar.gz \
       "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux.tar.gz" \
     && tar -C /usr/local/bin -xzf /tmp/openshift-client-linux.tar.gz oc kubectl \
     && rm -f /tmp/openshift-client-linux.tar.gz \
     && oc version --client \
+    && curl -fsSL -o /tmp/rclone.zip \
+      "https://downloads.rclone.org/rclone-current-linux-amd64.zip" \
+    && unzip -j /tmp/rclone.zip '*/rclone' -d /usr/local/bin \
+    && chmod +x /usr/local/bin/rclone \
+    && rm -f /tmp/rclone.zip \
+    && rclone version \
     && dnf clean all
 
 WORKDIR /app

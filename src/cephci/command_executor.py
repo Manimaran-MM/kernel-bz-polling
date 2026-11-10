@@ -7,6 +7,7 @@ import subprocess
 import os
 import json
 import shutil
+import tempfile
 import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -273,23 +274,45 @@ class CephCIExecutor:
             )
         return command, local_log_dir
 
-    def transfer_logs_to_remote(self, local_log_dir: str, jira_id: str, verification_type: str = "pre") -> bool:
-        """Copy logs to the remote log storage location.
+    def _public_log_dir(
+        self,
+        jira_id: str,
+        verification_type: str = "pre",
+        timestamp: Optional[str] = None,
+    ) -> str:
+        """Dashboard path suffix: COS_PATH_PREFIX/{jira_id}_{pre|post}_{timestamp}."""
+        vtype = (verification_type or "pre").lower().replace("/", "-")
+        ts = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+        log_key = f"{jira_id}_{vtype}_{ts}"
+        prefix = os.environ.get(
+            "COS_PATH_PREFIX",
+            self.config.get("storage.cos_path_prefix", "manual/manim/kernel-logs-ocp"),
+        ).strip("/")
+        return f"{prefix}/{log_key}" if prefix else log_key
 
-        Strategy:
-          1. If LOG_STORAGE_PATH is directly accessible (local/NFS mount),
-             do a simple cp.
-          2. Otherwise fall back to scp via LOG_STORAGE_HOST.
+    def transfer_logs_to_remote(
+        self,
+        local_log_dir: str,
+        jira_id: str,
+        verification_type: str = "pre",
+        remote_path: Optional[str] = None,
+    ) -> bool:
+        """Upload logs to IBM COS via rclone.
+
+        Destination:
+          {COS_REMOTE}:{COS_BUCKET}/{COS_PATH_PREFIX}/{jira_id}_{pre|post}_{timestamp}/
+
+        Pass remote_path (from _public_log_dir) so upload and dashboard share one folder.
 
         Returns True on success, False on failure.
         """
-        remote_base = os.environ.get(
-            "LOG_STORAGE_PATH",
-            self.config.get("storage.log_path", ""),
-        )
-        if not remote_base:
+        access_key = os.environ.get("COS_ACCESS_KEY_ID", "")
+        secret_key = os.environ.get("COS_SECRET_ACCESS_KEY", "")
+        bucket = os.environ.get("COS_BUCKET", "")
+        if not access_key or not secret_key or not bucket:
             self.logger.warning(
-                "⚠️  LOG_STORAGE_PATH not set, skipping log transfer"
+                "⚠️  COS_ACCESS_KEY_ID / COS_SECRET_ACCESS_KEY / COS_BUCKET not set, "
+                "skipping log transfer"
             )
             return False
 
@@ -298,82 +321,68 @@ class CephCIExecutor:
             self.logger.warning(f"⚠️  Local log directory does not exist: {local_log_dir}")
             return False
 
-        vtype = (verification_type or "pre").lower().replace("/", "-")
-        log_key = f"{jira_id}_{vtype}"
-        dest_dir = os.path.join(remote_base, log_key)
-
-        # --- Try local copy first (works when path is a local/NFS mount) ---
-        if os.path.isdir(remote_base) or os.path.isdir(os.path.dirname(remote_base)):
-            try:
-                os.makedirs(dest_dir, exist_ok=True)
-                import shutil
-                for item in local_path.iterdir():
-                    src = str(item)
-                    dst = os.path.join(dest_dir, item.name)
-                    if item.is_dir():
-                        shutil.copytree(src, dst, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(src, dst)
-                self.logger.info(f"✅ Logs copied locally to {dest_dir}")
-                return True
-            except Exception as e:
-                self.logger.warning(f"⚠️  Local copy failed ({e}), trying scp...")
-
-        # --- Fall back to scp ---
-        host = os.environ.get(
-            "LOG_STORAGE_HOST",
-            self.config.get("storage.log_host", ""),
+        remote_name = os.environ.get("COS_REMOTE", "ceph-qe-cos")
+        endpoint = os.environ.get(
+            "COS_ENDPOINT", "s3.au-syd.cloud-object-storage.appdomain.cloud"
         )
-        if not host:
-            self.logger.warning("⚠️  LOG_STORAGE_HOST not set and local copy failed, skipping")
-            return False
+        provider = os.environ.get("COS_PROVIDER", "IBMCOS")
+        public_path = remote_path or self._public_log_dir(jira_id, verification_type)
+        remote_dest = f"{remote_name}:{bucket}/{public_path}/"
 
-        user = os.environ.get(
-            "LOG_STORAGE_USER",
-            self.config.get("storage.log_user", ""),
+        rclone_conf = (
+            f"[{remote_name}]\n"
+            f"type = s3\n"
+            f"provider = {provider}\n"
+            f"access_key_id = {access_key}\n"
+            f"secret_access_key = {secret_key}\n"
+            f"endpoint = {endpoint}\n"
+            f"acl = private\n"
         )
-        ssh_key = os.environ.get(
-            "SSH_KEY_PATH",
-            self.config.get("storage.ssh_key_path", "~/.ssh/id_rsa"),
-        )
-        ssh_key = os.path.expanduser(ssh_key)
 
-        remote_dest = f"{remote_base}/{log_key}/"
-        remote_target = f"{user}@{host}:{remote_dest}" if user else f"{host}:{remote_dest}"
-
-        ssh_prefix = ["ssh"]
-        if os.path.isfile(ssh_key):
-            ssh_prefix += ["-i", ssh_key]
-        ssh_prefix += ["-o", "StrictHostKeyChecking=no"]
-
-        mkdir_target = f"{user}@{host}" if user else host
-        mkdir_cmd = ssh_prefix + [mkdir_target, f"mkdir -p {remote_dest}"]
-
-        self.logger.info(f"📤 Transferring logs to {remote_target}")
-
+        self.logger.info(f"📤 Transferring logs to {remote_dest}")
+        conf_path = None
         try:
-            subprocess.run(mkdir_cmd, capture_output=True, text=True, timeout=30)
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".conf", delete=False
+            ) as fh:
+                fh.write(rclone_conf)
+                conf_path = fh.name
 
-            scp_cmd = ["scp", "-r", "-o", "StrictHostKeyChecking=no"]
-            if os.path.isfile(ssh_key):
-                scp_cmd += ["-i", ssh_key]
-            scp_cmd += [f"{local_log_dir}/.", remote_target]
-
-            result = subprocess.run(scp_cmd, capture_output=True, text=True, timeout=600)
+            rclone_cmd = [
+                "rclone",
+                "copy",
+                f"{local_log_dir}/",
+                remote_dest,
+                "--config",
+                conf_path,
+                "--s3-no-check-bucket",
+            ]
+            result = subprocess.run(
+                rclone_cmd, capture_output=True, text=True, timeout=600
+            )
             if result.returncode == 0:
-                self.logger.info(f"✅ Logs transferred to {remote_target}")
+                self.logger.info(f"✅ Logs transferred to {remote_dest}")
                 return True
-            else:
-                self.logger.warning(
-                    f"⚠️  scp failed (rc={result.returncode}): {result.stderr[:500]}"
-                )
-                return False
+            self.logger.warning(
+                f"⚠️  rclone failed (rc={result.returncode}): "
+                f"{(result.stderr or result.stdout or '')[:500]}"
+            )
+            return False
         except subprocess.TimeoutExpired:
             self.logger.warning("⚠️  Log transfer timed out")
+            return False
+        except FileNotFoundError:
+            self.logger.warning("⚠️  rclone not found on PATH")
             return False
         except Exception as e:
             self.logger.warning(f"⚠️  Log transfer error: {e}")
             return False
+        finally:
+            if conf_path:
+                try:
+                    os.unlink(conf_path)
+                except OSError:
+                    pass
 
     def _extract_osp_cred(self, command: str) -> str:
         """Extract --osp-cred value from a command string, falling back to config default."""
@@ -494,12 +503,11 @@ class CephCIExecutor:
         platform = _extract_param(command, "--platform")
         rhbuild = _extract_param(command, "--rhbuild")
 
-        # Build the remote log path for the dashboard
-        remote_base = os.environ.get(
-            "LOG_STORAGE_PATH",
-            self.config.get("storage.log_path", ""),
+        # Dashboard/COS path: COS_PATH_PREFIX/{jira_id}_{pre|post}_{timestamp}
+        log_ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        remote_log_dir = self._public_log_dir(
+            jira_id, verification_type, timestamp=log_ts
         )
-        remote_log_dir = f"{remote_base}/{log_key}" if remote_base else local_log_dir
 
         # Record execution start
         execution_record = {
@@ -615,8 +623,13 @@ class CephCIExecutor:
             return False, "", error_msg
 
         finally:
-            # self.cleanup_instance(instance_name, osp_cred)
-            self.transfer_logs_to_remote(local_log_dir, jira_id, verification_type)
+            self.cleanup_instance(instance_name, osp_cred)
+            self.transfer_logs_to_remote(
+                local_log_dir,
+                jira_id,
+                verification_type,
+                remote_path=remote_log_dir,
+            )
             if not self.skip_dashboard:
                 try:
                     from src.dashboard.publisher import publish_dashboard

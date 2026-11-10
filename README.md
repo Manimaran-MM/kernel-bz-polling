@@ -9,7 +9,7 @@ This system automates the process of:
 - Extracting test requirements (pre/post verification) from JIRA tickets
 - Mapping RHEL fix versions to OCPVirt baseline datasources (`datasource://…`)
 - Building and executing CephCI test commands (including RHEL-8 specific handling)
-- Managing test logs via SCP to centralized storage
+- Uploading test logs to IBM COS via rclone
 - Publishing results to a GitHub Pages dashboard
 
 ## Workflow

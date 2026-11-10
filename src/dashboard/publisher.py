@@ -6,9 +6,10 @@ and pushes it to the gh-pages branch of the configured GitHub repository.
 import os
 import json
 import base64
+import time
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -110,6 +111,7 @@ td{padding:8px 12px;vertical-align:top}
 <script>
 const EMBEDDED_DATA = __DATA__;
 const JIRA_BASE = '__JIRA_SERVER__';
+const LOG_PUBLIC_BASE = '__LOG_PUBLIC_BASE_URL__';
 let DATA = EMBEDDED_DATA;
 
 async function init(){
@@ -140,7 +142,10 @@ const COLS = [
 
 function logUrl(path){
   if(!path) return null;
-  return path.replace(/^\/ceph\//, 'http://magna002.ceph.redhat.com/');
+  if(/^https?:\/\//i.test(path)) return path;
+  const base = (LOG_PUBLIC_BASE || '').replace(/\/+$/, '');
+  const suffix = String(path).replace(/^\/+/, '');
+  return base ? base + '/' + suffix : suffix;
 }
 
 let sortCol = 'start_time', sortAsc = false;
@@ -310,53 +315,294 @@ def _github_headers(token: str) -> dict:
     }
 
 
+def _get_file_sha(
+    filepath: str, token: str, repo: str, branch: str
+) -> Optional[str]:
+    """Return the current Contents-API blob sha for filepath, or None if missing."""
+    api_url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
+    headers = _github_headers(token)
+    try:
+        resp = requests.get(
+            api_url, headers=headers, params={"ref": branch}, timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.json().get("sha")
+        if resp.status_code != 404:
+            logger.warning(
+                f"GET {filepath} sha failed (HTTP {resp.status_code}): "
+                f"{resp.text[:200]}"
+            )
+    except Exception as e:
+        logger.warning(f"GET {filepath} sha error: {e}")
+    return None
+
+
 def _push_file_to_github(
-    filepath: str, content: bytes, token: str, repo: str, branch: str
+    filepath: str,
+    content: bytes,
+    token: str,
+    repo: str,
+    branch: str,
+    retries: int = 3,
 ) -> bool:
-    """Create or update a single file in the dashboard repo via Contents API."""
+    """Create or update a single file via Contents API, retrying on sha conflicts."""
     api_url = f"https://api.github.com/repos/{repo}/contents/{filepath}"
     headers = _github_headers(token)
 
-    sha: Optional[str] = None
-    try:
-        resp = requests.get(api_url, headers=headers, params={"ref": branch}, timeout=15)
-        if resp.status_code == 200:
-            sha = resp.json().get("sha")
-    except Exception:
-        pass
+    for attempt in range(1, retries + 1):
+        sha = _get_file_sha(filepath, token, repo, branch)
+        payload = {
+            "message": (
+                f"Update {filepath} — {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            ),
+            "content": base64.b64encode(content).decode(),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
 
-    payload = {
-        "message": f"Update {filepath} — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-        "content": base64.b64encode(content).decode(),
-        "branch": branch,
-    }
-    if sha:
-        payload["sha"] = sha
+        try:
+            resp = requests.put(api_url, headers=headers, json=payload, timeout=30)
+            if resp.status_code in (200, 201):
+                logger.info(f"Pushed {filepath} to {repo}")
+                return True
+            if resp.status_code in (409, 422) and attempt < retries:
+                logger.warning(
+                    f"Push {filepath} conflict (HTTP {resp.status_code}), "
+                    f"retry {attempt}/{retries} with fresh sha..."
+                )
+                time.sleep(1.0 * attempt)
+                continue
+            logger.warning(
+                f"Push {filepath} failed (HTTP {resp.status_code}): "
+                f"{resp.text[:300]}"
+            )
+            return False
+        except Exception as e:
+            if attempt < retries:
+                logger.warning(
+                    f"Push {filepath} error ({e}), retry {attempt}/{retries}..."
+                )
+                time.sleep(1.0 * attempt)
+                continue
+            logger.warning(f"Push {filepath} error: {e}")
+            return False
+    return False
 
-    try:
-        resp = requests.put(api_url, headers=headers, json=payload, timeout=30)
-        if resp.status_code in (200, 201):
-            logger.info(f"Pushed {filepath} to {repo}")
-            return True
-        logger.warning(f"Push {filepath} failed (HTTP {resp.status_code}): {resp.text[:300]}")
-        return False
-    except Exception as e:
-        logger.warning(f"Push {filepath} error: {e}")
-        return False
+
+def _push_files_commit(
+    files: List[Tuple[str, bytes]],
+    token: str,
+    repo: str,
+    branch: str,
+    message: str,
+    retries: int = 3,
+) -> bool:
+    """Update multiple files in one Git commit (Git Data API), with retries.
+
+    Used so executions.json and index.html land together after a test result.
+    """
+    headers = _github_headers(token)
+    base = f"https://api.github.com/repos/{repo}"
+
+    for attempt in range(1, retries + 1):
+        try:
+            ref_resp = requests.get(
+                f"{base}/git/ref/heads/{branch}", headers=headers, timeout=15
+            )
+            if ref_resp.status_code != 200:
+                logger.warning(
+                    f"GET ref heads/{branch} failed (HTTP {ref_resp.status_code}): "
+                    f"{ref_resp.text[:200]}"
+                )
+                return False
+            parent_sha = ref_resp.json()["object"]["sha"]
+
+            commit_resp = requests.get(
+                f"{base}/git/commits/{parent_sha}", headers=headers, timeout=15
+            )
+            if commit_resp.status_code != 200:
+                logger.warning(
+                    f"GET commit {parent_sha[:7]} failed "
+                    f"(HTTP {commit_resp.status_code}): {commit_resp.text[:200]}"
+                )
+                return False
+            base_tree_sha = commit_resp.json()["tree"]["sha"]
+
+            tree_items = []
+            for filepath, content in files:
+                blob_resp = requests.post(
+                    f"{base}/git/blobs",
+                    headers=headers,
+                    json={
+                        "content": base64.b64encode(content).decode(),
+                        "encoding": "base64",
+                    },
+                    timeout=30,
+                )
+                if blob_resp.status_code not in (200, 201):
+                    logger.warning(
+                        f"Create blob for {filepath} failed "
+                        f"(HTTP {blob_resp.status_code}): {blob_resp.text[:200]}"
+                    )
+                    return False
+                tree_items.append(
+                    {
+                        "path": filepath,
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_resp.json()["sha"],
+                    }
+                )
+
+            tree_resp = requests.post(
+                f"{base}/git/trees",
+                headers=headers,
+                json={"base_tree": base_tree_sha, "tree": tree_items},
+                timeout=30,
+            )
+            if tree_resp.status_code not in (200, 201):
+                logger.warning(
+                    f"Create tree failed (HTTP {tree_resp.status_code}): "
+                    f"{tree_resp.text[:200]}"
+                )
+                return False
+            new_tree_sha = tree_resp.json()["sha"]
+
+            commit_create = requests.post(
+                f"{base}/git/commits",
+                headers=headers,
+                json={
+                    "message": message,
+                    "tree": new_tree_sha,
+                    "parents": [parent_sha],
+                },
+                timeout=30,
+            )
+            if commit_create.status_code not in (200, 201):
+                logger.warning(
+                    f"Create commit failed (HTTP {commit_create.status_code}): "
+                    f"{commit_create.text[:200]}"
+                )
+                return False
+            new_commit_sha = commit_create.json()["sha"]
+
+            ref_update = requests.patch(
+                f"{base}/git/refs/heads/{branch}",
+                headers=headers,
+                json={"sha": new_commit_sha, "force": False},
+                timeout=15,
+            )
+            if ref_update.status_code in (200, 201):
+                names = ", ".join(path for path, _ in files)
+                logger.info(
+                    f"Pushed {names} to {repo}@{branch} "
+                    f"in commit {new_commit_sha[:7]}"
+                )
+                return True
+
+            if ref_update.status_code in (409, 422) and attempt < retries:
+                logger.warning(
+                    f"Ref update conflict (HTTP {ref_update.status_code}), "
+                    f"retry {attempt}/{retries}..."
+                )
+                time.sleep(1.0 * attempt)
+                continue
+
+            logger.warning(
+                f"Ref update failed (HTTP {ref_update.status_code}): "
+                f"{ref_update.text[:300]}"
+            )
+            return False
+        except Exception as e:
+            if attempt < retries:
+                logger.warning(
+                    f"Combined dashboard push error ({e}), "
+                    f"retry {attempt}/{retries}..."
+                )
+                time.sleep(1.0 * attempt)
+                continue
+            logger.warning(f"Combined dashboard push error: {e}")
+            return False
+    return False
 
 
-def _fetch_remote_executions(token: str, repo: str, branch: str) -> Dict:
-    """Download executions.json from the dashboard repo. Returns empty dict on failure."""
+def _decode_executions_payload(raw: bytes) -> Dict:
+    """Parse executions.json bytes into a dict. Raises on invalid content."""
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"executions.json must be a JSON object, got {type(data).__name__}")
+    return data
+
+
+def _fetch_remote_executions(
+    token: str, repo: str, branch: str, retries: int = 3
+) -> Optional[Dict]:
+    """Download executions.json from the dashboard repo.
+
+    Returns:
+        dict on success (including ``{}`` when the file is missing / 404)
+        None after retries are exhausted on transient or unexpected failures
+
+    Never treats a failed fetch as empty history — callers must abort publish
+    when this returns None to avoid wiping the dashboard table.
+    """
     api_url = f"https://api.github.com/repos/{repo}/contents/executions.json"
     headers = _github_headers(token)
-    try:
-        resp = requests.get(api_url, headers=headers, params={"ref": branch}, timeout=15)
-        if resp.status_code == 200:
-            raw = base64.b64decode(resp.json()["content"])
-            return json.loads(raw)
-    except Exception as e:
-        logger.debug(f"Could not fetch remote executions.json: {e}")
-    return {}
+
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(
+                api_url, headers=headers, params={"ref": branch}, timeout=15
+            )
+            if resp.status_code == 404:
+                return {}
+            if resp.status_code == 200:
+                payload = resp.json()
+                content = payload.get("content")
+                if content:
+                    raw = base64.b64decode(content)
+                    return _decode_executions_payload(raw)
+
+                download_url = payload.get("download_url")
+                if download_url:
+                    dl = requests.get(download_url, headers=headers, timeout=30)
+                    if dl.status_code == 200:
+                        return _decode_executions_payload(dl.content)
+                    err = (
+                        f"download_url fetch failed "
+                        f"(HTTP {dl.status_code}): {dl.text[:200]}"
+                    )
+                else:
+                    err = "Contents API 200 but no content or download_url"
+            elif resp.status_code in (403, 429) or resp.status_code >= 500:
+                err = (
+                    f"HTTP {resp.status_code}: {resp.text[:200]}"
+                )
+            else:
+                # Non-retryable client error (e.g. 401) — fail immediately
+                logger.warning(
+                    f"Could not fetch remote executions.json "
+                    f"(HTTP {resp.status_code}): {resp.text[:200]}"
+                )
+                return None
+        except Exception as e:
+            err = str(e)
+
+        if attempt < retries:
+            logger.warning(
+                f"Fetch remote executions.json failed ({err}), "
+                f"retry {attempt}/{retries}..."
+            )
+            time.sleep(1.0 * attempt)
+            continue
+
+        logger.warning(
+            f"Could not fetch remote executions.json after {retries} attempts: {err}"
+        )
+        return None
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -367,9 +613,13 @@ def generate_dashboard_html(executions: dict) -> str:
     """Render the dashboard HTML with execution data embedded."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     jira_server = os.environ.get("JIRA_SERVER", "").rstrip("/")
+    log_public_base = os.environ.get(
+        "LOG_PUBLIC_BASE_URL", "http://9.11.121.102/logs"
+    ).rstrip("/")
     data_json = json.dumps(executions, default=str)
     html = _HTML_TEMPLATE.replace("__TIMESTAMP__", timestamp)
     html = html.replace("__JIRA_SERVER__", jira_server)
+    html = html.replace("__LOG_PUBLIC_BASE_URL__", log_public_base)
     html = html.replace("__DATA__", data_json)
     return html
 
@@ -399,63 +649,105 @@ def publish_dashboard() -> bool:
         logger.warning(f"Failed to read {EXECUTIONS_FILE}: {e}")
         return False
 
-    if local_data:
-        # Fetch existing remote history and merge
-        remote_history = _fetch_remote_executions(token, repo, branch)
-        for _key, record in local_data.items():
-            jira_id = record.get("jira_id", "UNKNOWN")
-            vtype = record.get("verification_type")
-            is_excluded = record.get("status") == "excluded" or (
-                "reason" in record and not vtype
+    # Always load remote history first so we never publish a wipe on fetch failure
+    remote_history = _fetch_remote_executions(token, repo, branch)
+    if remote_history is None:
+        logger.warning(
+            "Skipping dashboard publish: could not load remote executions.json "
+            "(refusing to risk overwriting history)"
+        )
+        return False
+
+    if not local_data:
+        if remote_history:
+            logger.warning(
+                "Skipping dashboard publish: local execution data is empty but "
+                f"remote history has {len(remote_history)} entries "
+                "(refusing to wipe dashboard)"
             )
+            return False
+        logger.info("Local and remote execution data are empty — nothing to publish")
+        return True
 
-            if is_excluded and (not vtype or vtype == "N/A"):
-                # Excluded entry with no verification type: update ALL existing
-                # remote entries for this JIRA ID instead of creating a new :N/A row
-                matched = False
-                for rkey, rval in remote_history.items():
-                    if rkey.startswith(f"{jira_id}:"):
-                        rval.update({k: v for k, v in record.items() if v is not None})
-                        matched = True
-                if not matched:
-                    hkey = _make_history_key(record)
-                    remote_history[hkey] = dict(record)
-            else:
+    remote_count_before = len(remote_history)
+
+    for _key, record in local_data.items():
+        jira_id = record.get("jira_id", "UNKNOWN")
+        vtype = record.get("verification_type")
+        is_excluded = record.get("status") == "excluded" or (
+            "reason" in record and not vtype
+        )
+
+        if is_excluded and (not vtype or vtype == "N/A"):
+            # Excluded entry with no verification type: update ALL existing
+            # remote entries for this JIRA ID instead of creating a new :N/A row
+            matched = False
+            for rkey, rval in remote_history.items():
+                if rkey.startswith(f"{jira_id}:"):
+                    rval.update({k: v for k, v in record.items() if v is not None})
+                    matched = True
+            if not matched:
                 hkey = _make_history_key(record)
-                existing = remote_history.get(hkey, {})
-                for k, v in record.items():
-                    if v is not None:
-                        existing[k] = v
-                    elif k == "reason":
-                        existing.pop(k, None)
-                remote_history[hkey] = existing
+                remote_history[hkey] = dict(record)
+        else:
+            hkey = _make_history_key(record)
+            existing = remote_history.get(hkey, {})
+            for k, v in record.items():
+                if v is not None:
+                    existing[k] = v
+                elif k == "reason":
+                    existing.pop(k, None)
+            remote_history[hkey] = existing
 
-        # Remove any stale :N/A entries if a typed entry exists for the same JIRA
-        stale_keys = []
-        for rkey in remote_history:
-            if rkey.endswith(":N/A"):
-                jid = rkey.rsplit(":", 1)[0]
-                for other in remote_history:
-                    if other.startswith(f"{jid}:") and not other.endswith(":N/A"):
-                        stale_keys.append(rkey)
-                        break
-        for sk in stale_keys:
-            del remote_history[sk]
-            logger.info(f"Removed stale dashboard entry: {sk}")
+    # Remove any stale :N/A entries if a typed entry exists for the same JIRA
+    stale_keys = []
+    for rkey in remote_history:
+        if rkey.endswith(":N/A"):
+            jid = rkey.rsplit(":", 1)[0]
+            for other in remote_history:
+                if other.startswith(f"{jid}:") and not other.endswith(":N/A"):
+                    stale_keys.append(rkey)
+                    break
+    for sk in stale_keys:
+        del remote_history[sk]
+        logger.info(f"Removed stale dashboard entry: {sk}")
 
-        publish_data = remote_history
-    else:
-        logger.info("Local execution data is empty — publishing clean dashboard")
-        publish_data = {}
+    publish_data = remote_history
 
-    # Push executions.json
+    # Safety net: refuse to publish if merge somehow dropped most of history
+    if remote_count_before > 0:
+        min_allowed = max(1, int(0.5 * remote_count_before))
+        if len(publish_data) < min_allowed:
+            logger.warning(
+                "Skipping dashboard publish: merged history shrank from "
+                f"{remote_count_before} to {len(publish_data)} entries "
+                f"(below {min_allowed} threshold); refusing to wipe dashboard"
+            )
+            return False
+
+    # Push executions.json + index.html together in one commit
     json_bytes = json.dumps(publish_data, indent=2, default=str).encode()
-    ok_json = _push_file_to_github("executions.json", json_bytes, token, repo, branch)
+    html_bytes = generate_dashboard_html(publish_data).encode()
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ok = _push_files_commit(
+        [
+            ("executions.json", json_bytes),
+            ("index.html", html_bytes),
+        ],
+        token,
+        repo,
+        branch,
+        message=f"Update dashboard — {stamp}",
+    )
+    if ok:
+        return True
 
-    # Push index.html
-    html = generate_dashboard_html(publish_data)
-    ok_html = _push_file_to_github("index.html", html.encode(), token, repo, branch)
-
+    # Fallback: Contents API per file (also retries on missing/stale sha)
+    logger.warning("Combined dashboard commit failed; falling back to per-file push")
+    ok_json = _push_file_to_github(
+        "executions.json", json_bytes, token, repo, branch
+    )
+    ok_html = _push_file_to_github("index.html", html_bytes, token, repo, branch)
     return ok_json and ok_html
 
 
@@ -470,6 +762,13 @@ def fetch_passed_jiras() -> Set[str]:
         return set()
 
     remote = _fetch_remote_executions(token, repo, branch)
+    if remote is None:
+        logger.warning(
+            "Could not load remote executions.json for passed-JIRA lookup; "
+            "treating as empty"
+        )
+        return set()
+
     passed = set()
     for key, record in remote.items():
         if record.get("status") == "success":

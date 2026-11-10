@@ -5,17 +5,15 @@ queries:
   kernel_cephfs_integration:
     name: "Kernel CephFS Integration Testing"
     description: "Query for RHEL kernel CephFS components in Integration or In Progress status"
-    # Original query (restore after testing):
-    # (project = RHEL
-    # and component = "kernel / File Systems / CephFS"
-    # and status = Integration)
-    # or (project = RHEL
-    # and component = "kernel / File Systems / CephFS"
-    # and status = "In Progress"
-    # and "Preliminary Testing" != Pass)
-    # ORDER BY "cf[10470]" ASC, summary ASC, assignee ASC
     jql: |
-      key = RHEL-292766
+      (project = RHEL
+      and component = "kernel / File Systems / CephFS"
+      and status = Integration)
+      or (project = RHEL
+      and component = "kernel / File Systems / CephFS"
+      and status = "In Progress"
+      and "Preliminary Testing" != Pass)
+      ORDER BY "cf[10470]" ASC, summary ASC, assignee ASC
     fields:
       - key
       - summary
