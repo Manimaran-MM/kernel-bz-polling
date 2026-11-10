@@ -9,6 +9,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Base image already includes git, openssh-clients, curl-minimal,
 # ca-certificates, rsync, gcc, and make.
+# OpenShift CLI (oc) + gettext (envsubst) required by create-rhel-guest-image.sh
+# when provisioning *-custom DataVolumes for unmet baselines.
+ARG OC_VERSION=4.16.30
+RUN dnf install -y gettext \
+    && curl -fsSL -o /tmp/openshift-client-linux.tar.gz \
+      "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OC_VERSION}/openshift-client-linux.tar.gz" \
+    && tar -C /usr/local/bin -xzf /tmp/openshift-client-linux.tar.gz oc kubectl \
+    && rm -f /tmp/openshift-client-linux.tar.gz \
+    && oc version --client \
+    && dnf clean all
 
 WORKDIR /app
 

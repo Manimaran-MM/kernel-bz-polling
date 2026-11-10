@@ -50,6 +50,14 @@ class CephCICommandBuilder:
         self.ocpvirt_profile_post = self.config.get(
             'ocpvirt.profile_post', 'o1.xlarge'
         )
+        # CKI/test kernels are typically unsigned — disable Secure Boot by default
+        secure_boot = self.config.get('ocpvirt.secure_boot', False)
+        if isinstance(secure_boot, str):
+            self.ocpvirt_secure_boot = secure_boot.strip().lower() in (
+                '1', 'true', 'yes', 'on',
+            )
+        else:
+            self.ocpvirt_secure_boot = bool(secure_boot)
 
         # Kernel verification parameters
         self.instance_name_prefix = self.config.get(
@@ -241,8 +249,12 @@ class CephCICommandBuilder:
             else self.ocpvirt_profile
         )
         params['--custom-config ocpvirt_profile'] = profile
+        # Unsigned CKI/test kernels need Secure Boot off on OCP Virt EFI VMs
+        secure_boot_val = 'true' if self.ocpvirt_secure_boot else 'false'
+        params['--custom-config ocpvirt_secure_boot'] = secure_boot_val
         self.logger.info(
-            f"OCPVirt namespace={self.ocpvirt_namespace} profile={profile}"
+            f"OCPVirt namespace={self.ocpvirt_namespace} profile={profile} "
+            f"secure_boot={secure_boot_val}"
         )
 
         # Custom config: pre or post depending on verification type

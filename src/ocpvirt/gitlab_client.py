@@ -51,7 +51,7 @@ class GitLabDataVolumeClient:
         self.dv_path = (
             os.environ.get("GITLAB_DV_PATH")
             or self.config.get("gitlab.dv_path")
-            or "rhel-guest-images"
+            or "guest-images"
         ).strip("/")
         self._session = requests.Session()
         # Match compose_kernel / OCP clients: internal GitLab CA is not in the image

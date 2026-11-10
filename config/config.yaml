@@ -17,11 +17,11 @@ jira:
 cephci:
   repo_url: "${CEPHCI_REPO_URL}"
   branch: "${CEPHCI_BRANCH}"
-  default_branch: "master"
+  default_branch: "main"
   local_path: "${CEPHCI_LOCAL_PATH}"
   repo_path: "/ceph/cephci"
   log_dir: "./data/logs/kernel-logs"
-  instance_name_prefix: "auto-kernel-jira-"
+  instance_name_prefix: "mani-kernel-jira-"
   timeout: 21600  # 6 hours in seconds
   rhbuild_mapping:
     "10": "9.2"   # RHEL 10.x -> rhbuild 9.2
@@ -63,6 +63,8 @@ ocpvirt:
   namespace: "rdu3_ceph_jenkins"
   profile: "o1.large"              # default VirtualMachineClusterInstancetype
   profile_post: "o1.xlarge"        # sizing for post verification (replaces ci.standard.large)
+  # Passed as --custom-config ocpvirt_secure_boot=… (false for unsigned CKI/test kernels)
+  secure_boot: false
   token: "${OCPVIRT_TOKEN}"
   certificate_authority_data: "${OCPVIRT_CERTIFICATE_AUTHORITY_DATA}"
   # ssl_ca_cert: "${OCPVIRT_SSL_CA_CERT}"
@@ -72,6 +74,28 @@ ocpvirt:
   http_image_fallback: true
   check_datasource_exists: true    # probe cluster DataSource before falling back
   prefer_http_guest_image: false   # true = always use validated guest HTTPS URL
+  # Compose trees to search for an older same-stream guest image when the
+  # GitLab DataSource compose kernel is too new. Tried after the guest URL's
+  # own rel-eng parent. Same RHEL major.minor only (el10_3 → RHEL-10.3*).
+  # rel-eng often has only the tip; nightly keeps dated builds with older kernels.
+  compose_releng:
+    "8":
+      - "https://download.devel.redhat.com/rhel-8/rel-eng/RHEL-8/"
+      - "https://download.devel.redhat.com/rhel-8/nightly/RHEL-8/"
+    "9":
+      - "https://download.devel.redhat.com/rhel-9/rel-eng/RHEL-9/"
+      - "https://download.devel.redhat.com/rhel-9/nightly/RHEL-9/"
+    "10":
+      - "https://download.devel.redhat.com/rhel-10/rel-eng/RHEL-10/"
+      - "https://download.devel.redhat.com/rhel-10/nightly/RHEL-10/"
+  # When shared datasource kernel is too new, provision a *-custom DV via
+  # create-guest-image.sh and stamp that name into inventory/global-conf.
+  custom_baseline:
+    enabled: true
+    project: "ceph-jenkins"          # apply --project → {project}--runtime-int
+    name_suffix: "-custom"           # apply --name rhelXY-iso-custom
+    repo_path: "data/cephci-openshift"  # local script+templates workdir
+    replace_on_url_mismatch: true    # apply --replace only for *-custom names
 
 # GitLab cephci-openshift — DataVolume YAMLs with guest-image compose URLs
 gitlab:

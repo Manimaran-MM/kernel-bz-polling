@@ -227,12 +227,35 @@ src/ocpvirt/baseline.py   — BaselineMapper (RHEL → datasource://)
 
 **Key logic:**
 - Look up `cephci.datasource_mapping` by `major.minor` then `major` (e.g. `9.4` → `datasource://rhel94`)
-- Require a matching ocpvirt inventory in `cephci.inventory_mapping` for non-RHEL-8
-- Omit unmapped versions so Phase 8 skips them
-- Persist to `data/baseline_images.json`
+- Fetch guest URL from GitLab DataVolume YAML; scrape compose kernel; require baseline kernel older than JIRA CKI kernel
+- Older-compose search is **same RHEL major.minor only** (e.g. `el10_3` → `RHEL-10.3*`); cross-minor baselines are rejected
+- Primary tree = guest URL parent; secondary = `ocpvirt.compose_releng` for that major (rel-eng tip, then nightly dated builds)
+- Persist accepted baselines to `data/baseline_images.json` and unmet to `data/unmet_baselines.json`
 
 **Input:** Commands + JIRA fix versions  
-**Output:** Per-JIRA baseline records (`baseline_image`, `baseline_kernel` = mapped key, `is_rhel8`, …)
+**Output:** Per-JIRA baseline records (`baseline_image`, `baseline_kernel`, `is_rhel8`, …) plus unmet reasons
+
+### Phase 7.5: Custom Baseline DataVolume Provision
+
+Eligible unmet reasons with an `expected_baseline_url`:
+
+- `baseline_kernel_too_new` — shared DataSource base kernel ≥ JIRA base (CKI brew suffix ignored)
+- `no_datasource_mapping` — no static `datasource_mapping` entry (e.g. RHEL 9.8); compose URL comes from `ocpvirt.compose_releng`
+
+```
+src/ocpvirt/custom_datavolume.py  — runs create-guest-image.sh generate/apply
+```
+
+**Sequence (isolated from shared DV names):**
+1. Log `ocpvirt.custom_baseline` config (project, name_suffix, repo_path, …)
+2. `create-guest-image.sh generate --distro rhel --version X.Y --url <expected_baseline_url>`
+3. Rename generated YAML to `rhelXY-iso-custom` (script has no `--suffix`)
+4. `create-guest-image.sh apply --name rhelXY-iso-custom --project <config>` (default `ceph-jenkins`)
+5. For unmapped RHEL: generate `conf/inventory/ocpvirt-rhel-X.Y.yaml` stamped with the custom datasource
+6. Promote those JIRAs into accepted baselines with  
+   `baseline_image: datasource://{project}--runtime-int/rhelXY-iso-custom`
+
+Shared names (`rhel94-iso`, `rhel810-iso`, …) are never applied or replaced. Other unmet reasons (`no_jira_kernel`, …) still skip.
 
 ### Phase 8: Command Execution
 
@@ -244,9 +267,10 @@ src/cephci/command_executor.py  — Subprocess execution, log capture, SCP, dash
 
 **Per-JIRA execution flow:**
 
-1. **Update baseline image:**
+1. **Update baseline image** (same string for shared or custom DV):
    - Non-RHEL-8: updates `image-name` in the ocpvirt inventory YAML
    - RHEL-8: updates `ocpvirt` / `openstack` image-name in the global conf YAML (client nodes)
+   - Custom baselines use e.g. `datasource://ceph-jenkins--runtime-int/rhel102-iso-custom`
 2. **Install CephCI dependencies:** `pip install -r requirements.txt` (once)
 3. **Populate OCPVirt credentials:** writes `globals.ocpvirt-credentials` to `ocpvirt/osp-cred-ocpvirt.yaml`
 4. **Execute command:** `subprocess.run()` with configured timeout (`--cloud ocpvirt`)

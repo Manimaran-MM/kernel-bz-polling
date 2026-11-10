@@ -615,7 +615,7 @@ class CephCIExecutor:
             return False, "", error_msg
 
         finally:
-            self.cleanup_instance(instance_name, osp_cred)
+            # self.cleanup_instance(instance_name, osp_cred)
             self.transfer_logs_to_remote(local_log_dir, jira_id, verification_type)
             if not self.skip_dashboard:
                 try:

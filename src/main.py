@@ -11,11 +11,14 @@ Usage:
 
 import sys
 import os
+import re
+import time
 import json
 import argparse
 import yaml
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -45,6 +48,22 @@ def load_baseline_images(logger):
         except Exception as e:
             logger.warning(f"Could not load baselines from {path}: {e}")
     return {}
+
+
+def ensure_inventory_flag(command: str, inventory: Optional[str]) -> str:
+    """Ensure --inventory is present/updated on a cephci run.py command string."""
+    if not command or not inventory:
+        return command or ""
+    flag = f"--inventory '{inventory}'"
+    if "--inventory " in command:
+        # Replace existing value (quoted or bare)
+        return re.sub(
+            r"--inventory\s+(?:'[^']*'|\"[^\"]*\"|\S+)",
+            flag,
+            command,
+            count=1,
+        )
+    return command.rstrip() + f" {flag}"
 
 
 def apply_baseline_to_cephci(exec_cmd, baseline_info, logger, cephci_root="cephci"):
@@ -871,8 +890,6 @@ def main():
                         full_path = Path(repo_manager.local_path) / inv_path
                         if full_path.exists():
                             # Check if it was just created
-                            import os
-                            import time
                             file_age = time.time() - os.path.getmtime(full_path)
                             if file_age < 5:  # Created in last 5 seconds
                                 logger.info(f"  ✅ Generated: {inv_path}")
@@ -1042,6 +1059,68 @@ def main():
 
         logger.info("=" * 60)
 
+        # Phase 7.5 - Custom DV for unmet baselines (shared DS kernel too new)
+        logger.info("=" * 60)
+        logger.info("Phase 7.5: Custom Baseline DataVolume Provision")
+        logger.info("=" * 60)
+        try:
+            from src.ocpvirt.custom_datavolume import (
+                provision_custom_baselines_for_unmet,
+            )
+
+            if unmet_baselines:
+                cephci_path = (
+                    get_config().get("cephci.local_path")
+                    or os.environ.get("CEPHCI_LOCAL_PATH")
+                    or "cephci"
+                )
+                promoted, unmet_baselines = provision_custom_baselines_for_unmet(
+                    unmet_baselines,
+                    commands or [],
+                    logger=logger,
+                    cephci_root=cephci_path,
+                )
+                if promoted:
+                    rhosd_jira_baselines.update(promoted)
+                    for jid, rec in promoted.items():
+                        rhosd_kernel_map[jid] = rec.get("baseline_kernel") or rec.get(
+                            "baseline_image", "N/A"
+                        )
+                    os.makedirs("data", exist_ok=True)
+                    with open(BASELINE_IMAGES_FILE, "w") as f:
+                        json.dump(rhosd_jira_baselines, f, indent=2)
+                    with open(UNMET_BASELINES_FILE, "w") as f:
+                        json.dump(unmet_baselines, f, indent=2)
+                    logger.info(
+                        f"📄 Updated baselines after custom DV: "
+                        f"{len(promoted)} promoted, {len(unmet_baselines)} still unmet"
+                    )
+                    if commands and validations:
+                        table_content = create_jira_table(
+                            jira_issues, commands, validations, rhosd_kernel_map
+                        )
+                        write_table_to_file(
+                            "data/jira_issues_table.txt", table_content
+                        )
+                else:
+                    logger.info(
+                        "No JIRAs promoted via custom DV "
+                        "(none eligible, disabled, or provision failed)"
+                    )
+            else:
+                logger.info("No unmet baselines — skipping custom DV provision")
+
+            logger.info(
+                "Phase 7.5: Custom Baseline DataVolume Provision - COMPLETED ✅"
+            )
+        except Exception as e:
+            logger.error(f"Phase 7.5 error: {e}", exc_info=True)
+            logger.warning(
+                "Phase 7.5: Custom Baseline DataVolume Provision - Failed"
+            )
+
+        logger.info("=" * 60)
+
         # Phase 8 - Execute JIRAs that have a mapped baseline datasource
         logger.info("=" * 60)
         logger.info("Phase 8: Command Execution")
@@ -1086,13 +1165,16 @@ def main():
                     fix_version = fix_version_map.get(jira_id, "N/A")
 
                     if baseline and baseline.get("baseline_image"):
+                        # Prefer runtime/custom inventory from Phase 7.5 when present
+                        inv = baseline.get("inventory") or inventory
+                        command = ensure_inventory_flag(cmd.get("command") or "", inv)
                         executable_commands.append({
                             "jira_id": jira_id,
-                            "command": cmd.get("command"),
+                            "command": command,
                             "rhosd_kernel": baseline.get("baseline_kernel"),
                             "baseline_image": baseline["baseline_image"],
                             "guest_image_url": baseline.get("guest_image_url"),
-                            "inventory": inventory,
+                            "inventory": inv,
                             "verification_type": vtype,
                             "jira_kernel": jira_kernel,
                             "fix_version": fix_version,
@@ -1233,6 +1315,13 @@ def main():
                             baseline_info = rhosd_jira_baselines.get(
                                 exec_cmd["jira_id"], {}
                             )
+                            if baseline_info.get("baseline_source") == "custom_datavolume":
+                                logger.info(
+                                    f"  📦 Using custom DV for inventory image-name: "
+                                    f"{baseline_info.get('custom_dv_name')} "
+                                    f"(project={baseline_info.get('custom_dv_project')}) "
+                                    f"→ {baseline_info.get('baseline_image')}"
+                                )
                             apply_baseline_to_cephci(exec_cmd, baseline_info, logger)
 
                             success, stdout, stderr = executor.execute_command(

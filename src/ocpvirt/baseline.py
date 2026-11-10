@@ -32,7 +32,9 @@ class BaselineMapper:
             "cephci.inventory_mapping", {}
         ) or {}
         self.gitlab = GitLabDataVolumeClient()
-        self.compose = ComposeKernelResolver()
+        self.compose = ComposeKernelResolver(
+            compose_releng=self.config.get("ocpvirt.compose_releng", {}) or {}
+        )
         # Cache: datasource → (guest_url, kernel) so we don't re-fetch per JIRA
         self._kernel_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
 
@@ -149,18 +151,48 @@ class BaselineMapper:
             )
             jira_kernel = str(jira_kernel).strip() if jira_kernel else ""
 
+            rhel_keys = self.parse_rhel_keys(fix_versions)
             datasource, matched_key = self.resolve_datasource(fix_versions)
             if not datasource:
                 self.logger.warning(
                     f"  ⚠️  {jira_id}: No OCPVirt datasource mapping for "
                     f"RHEL {fix_versions or 'unknown'}"
                 )
+                # Still try compose_releng for an older same-stream guest URL so
+                # Phase 7.5 can provision a *-custom DV + runtime inventory.
+                expected_url, expected_kernel = None, None
+                if jira_kernel and jira_kernel.upper() != "N/A":
+                    expected_url, expected_kernel = self.compose.find_older_baseline(
+                        None, jira_kernel
+                    )
+                    if expected_url:
+                        self.logger.info(
+                            f"  📎 {jira_id}: no shared datasource — will try "
+                            f"custom DV from {expected_url}"
+                            + (
+                                f" (kernel {expected_kernel})"
+                                if expected_kernel
+                                else ""
+                            )
+                        )
+                    else:
+                        self.logger.warning(
+                            f"  📎 {jira_id}: no older compose guest URL found "
+                            f"for unmapped RHEL {fix_versions}"
+                        )
+                rhel_key = rhel_keys[0] if rhel_keys else None
+                # Prefer major.minor from kernel el tag when fix version is fuzzy
+                stream = self.compose.rhel_stream_from_kernel(jira_kernel)
+                if stream:
+                    rhel_key = f"{stream[0]}.{stream[1]}"
                 unmet[jira_id] = {
                     "reason": "no_datasource_mapping",
                     "fix_versions": fix_versions,
                     "jira_kernel": jira_kernel or None,
-                    "expected_baseline_url": None,
-                    "expected_baseline_kernel": None,
+                    "rhel_key": rhel_key,
+                    "is_rhel8": is_rhel8,
+                    "expected_baseline_url": expected_url,
+                    "expected_baseline_kernel": expected_kernel,
                 }
                 continue
 
@@ -237,7 +269,10 @@ class BaselineMapper:
                 }
                 continue
 
-            cmp = self.compose.compare_kernel_versions(baseline_kernel, jira_kernel)
+            # Same RHEL base release (ignoring CKI brew suffix) is not usable
+            cmp = self.compose.compare_kernel_base_versions(
+                baseline_kernel, jira_kernel
+            )
             if cmp >= 0:
                 expected_url, expected_kernel = self._lookup_expected_older_url(
                     guest_url, jira_kernel

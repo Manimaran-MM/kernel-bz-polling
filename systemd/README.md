@@ -11,10 +11,10 @@ Runs the kernel-bz-polling container every other day at 2:00 AM on the RHEL VM.
 
 Before enabling the timer, ensure the following are in place on the VM:
 
-### Required files under `~/kernel-bz-polling/`
+### Required files under `~/source_code/kernel-bz-polling/`
 
 ```
-~/kernel-bz-polling/
+~/source_code/kernel-bz-polling/
 ├── .env                    # Credentials: JIRA token, OCPVirt token/CA, GitHub token, SSH, etc.
 ```
 
